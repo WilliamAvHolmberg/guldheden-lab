@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "guldheden-archive",
+  "main": "party/server.js",
+  "compatibility_date": "2025-06-01",
+  "durable_objects": {
+    "bindings": [{ "name": "Guldheden", "class_name": "Guldheden" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Guldheden"] }]
+}
