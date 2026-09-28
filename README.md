@@ -5,13 +5,48 @@ wall out on Guldhedstorget turns visitors into historical figures that mirror th
 faces the big street, so the audience stands with their backs to the street. More people bring more
 colour, light and music.
 
+Live: https://guldheden-archive.vercel.app
+
+## Running it locally
+
+**Requirements:** Node.js 22+ (the smoke test uses the built-in `WebSocket`) and a browser with WebGL.
+No accounts, API keys or `.env` files are needed to run locally.
+
 ```sh
 npm install
-npm run party      # room server (PartyServer on wrangler) at localhost:8787
-npm run dev        # http://localhost:5199
+npm run party      # terminal 1: room server (PartyServer via `wrangler dev`) on ws://localhost:8787
+npm run dev        # terminal 2: the site on http://localhost:5199
 ```
 
-Without the room server running the app simply works in single-player.
+Open http://localhost:5199, type a name and enter the square.
+
+- **Single-player:** just run `npm run dev`. Without the room server the app runs in single-player mode,
+  and the HUD shows "Single-player".
+- **Multiplayer:** with both running, the HUD shows **● Online · rum guldheden**. On localhost the site
+  finds the room server at `localhost:8787` automatically. Each browser tab is a separate player, but
+  Chrome throttles background tabs, so use two windows side by side or the bot below.
+- **Webcam pose** (`C`) only works on `https` or `localhost`. The MediaPipe wasm and model are served
+  from `public/`, so no CDN is needed.
+
+### Scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Vite dev server on port 5199 |
+| `npm run party` | Local room server (`wrangler dev`) on port 8787. Local state is written to `.wrangler/` (git-ignored) |
+| `npm run build` / `npm run preview` | Production build to `dist/` / serve it |
+| `npm run smoke` | Protocol test against the local room server: two clients, 10 checks, should end with `All 10 checks passed` |
+| `node scripts/smoke-test.mjs bot --room bot-test` | Fake player "Bertil (bot)" that walks to the wall, waves, chats and switches era. Open `http://localhost:5199/?room=bot-test` to watch |
+| `npm run smoke:prod`, `npm run bot:prod`, `npm run deploy*` | Same against / deploy to the author's production host (see [Deploy](#deploy)) |
+
+There is no unit test suite. `npm run smoke` is the check to run after changing `party/server.js`,
+`src/net.js` or `src/multiplayer.js`.
+
+### Notes for AI agents
+
+Project skills live in `.claude/skills/`: `deploy` (deploying and verifying production) and
+`multiplayer-smoke-test` (verifying sync locally or in production). Never run the bot or test clients in the
+main room `guldheden` in production. Real people use it, so use `?room=bot-test`.
 
 ## Multiplayer (PartyServer / Cloudflare Durable Objects)
 
@@ -33,8 +68,9 @@ Server: `party/server.js`. Client: `src/net.js`, `src/multiplayer.js`.
 
 ## Deploy
 
-Live: https://guldheden-archive.vercel.app. Full guide with verification and troubleshooting: [`DEPLOYMENT.md`](DEPLOYMENT.md). Short version: `npm run deploy` (room server → smoke test → site).
-
+Full guide with verification and troubleshooting (in Swedish): [`DEPLOYMENT.md`](DEPLOYMENT.md).
+For the author's setup it is `npm run deploy` (room server → smoke test → site). The `*:prod` scripts in
+`package.json` point to the author's host, so if you deploy your own copy, change them to your host.
 
 The room server uses [PartyServer](https://github.com/cloudflare/partykit/tree/main/packages/partyserver),
 the Cloudflare-hosted successor to PartyKit. It is the same `partysocket` client, running on your own free
