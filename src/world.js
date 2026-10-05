@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { staticBatch } from './batch.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import {
   rng, toTexture, pavingTextures, flagstoneTextures, cobbleTextures, stuccoTexture,
@@ -48,12 +49,17 @@ export function headingToScreen(pos) {
   return Math.atan2(target.x - pos.x, target.z - pos.z);
 }
 
-/** Is a world position inside the pose sensors' field of view? */
-export function inSensorZone(pos) {
+/**
+ * The stage: a flush wooden floor in front of the LED wall, in installation-local coordinates
+ * (x = distance in front of the screen, negative; z = lateral). Only people standing on it
+ * (or sitting on one of its benches) appear on the screen.
+ */
+export const STAGE = { x0: -7.4, x1: -0.4, z0: -6.4, z1: 6.4 };
+
+/** Is a world position on the stage floor? */
+export function onStage(pos) {
   const l = toScreenLocal(pos, _zl);
-  const d = -l.x;
-  if (d < 0.3 || d > 11.5) return false;
-  return Math.abs(l.z) < Math.min(6.5 + d * 0.55, 11);
+  return l.x >= STAGE.x0 && l.x <= STAGE.x1 && l.z >= STAGE.z0 && l.z <= STAGE.z1;
 }
 const _zl = new THREE.Vector3();
 
@@ -739,7 +745,7 @@ export function buildWorld(scene, renderer) {
   scene.add(hemi);
   const sun = new THREE.DirectionalLight('#fff4e0', 2.6);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(4096, 4096);
+  sun.shadow.mapSize.set(2048, 2048); // 4096 cost a lot of fill rate on laptops for little visible gain
   const sc = sun.shadow.camera;
   sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1; sc.far = 260;
   sun.shadow.bias = -0.0004;
@@ -807,6 +813,9 @@ export function buildWorld(scene, renderer) {
     cloudMat.uniforms.time.value = t;
     clouds.position.copy(camera.position);
   }
+
+  // everything above is static: merge it per material (≈1 200 draw calls → a few dozen)
+  staticBatch(root);
 
   const buildings = [
     { x0: L.x0, x1: L.x1, z0: L.z0, z1: L.z1, h: L.h + 3 },

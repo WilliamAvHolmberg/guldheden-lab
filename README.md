@@ -101,29 +101,33 @@ Cloudflare account. (PartyKit's shared `partykit.dev` platform currently refuses
 
 ## How the concept is modelled
 
-- **Tracking**: anyone inside the sensor zone in front of the wall gets a random historical avatar
-  (`HISTORICAL` in `src/character.js`) that mirrors their pose in real time.
-- **Escalation**: 0 people = attract mode (sepia, film grain). Each extra person raises the level
-  (1 solo, 2 duo, 3–4 group, 5+ festival). Colour saturation, bunting, stage lights, confetti,
-  dancing archive extras, string lights and spotlights on the real square, and the music layers
-  (which open up from "old radio" to full band) all follow the level.
-- **Proximity**: two visitors within 1.5 m trigger a duo animation between their avatars
-  (swing dance, handshake, hat tip).
+- **The stage**: a flush wooden floor in front of the wall with "STEP IN" and footprint groups painted on
+  it (two pairs, three pairs). There are deliberately no captions: visitors discover what standing
+  together does. Nothing triggers on the footprints themselves. Only people
+  standing on the stage, or sitting on one of the four benches along its edges, appear on the screen.
+- **Avatars**: everyone on the stage gets a historical figure (`HISTORICAL` in `src/character.js`) that
+  mirrors their pose in real time. Someone sitting on a bench appears standing.
+- **Empty stage**: the wall shows black-and-white, scratched old film of Guldhedstorget in 1944, with
+  1940s people strolling and 1940s cars driving past. Street ambience plays.
+- **Someone steps in**: the picture turns to colour, the bulbs around the wall light up, a soft song plays.
+- **Two close together** (or two on the same bench): their avatars turn to each other and chat, with
+  speech bubbles showing historical facts (`src/facts.js`), laughter and a murmur of voices.
+- **Three or more close together**: their avatars dance in a ring with sparkles and confetti, vintage
+  spotlights light the stage and a high-tempo song plays.
+- **Music**: the group's own songs and sounds in `public/audio` (see `CREDITS.md` there).
 - **Content filter**: a hand held at the mouth (e.g. smoking) is not mirrored. The avatar's arm stays down.
-- **Retention**: rotating eras, including children's drawings as the background, auto-rotating
-  every ~90 s when nobody uses the pillar.
-- **Privacy note** on the pillar plaque: only joint positions are read, no video is stored.
-- **Wayfinding**: LED light strips in the paving pulse from the entrances towards the zone.
-- **Static stage lighting**: four fixed spotlights on the truss light the zone; only brightness and a
-  festival tint follow the level.
-- **Audience benches** flank the zone just outside the sensors' field of view. Elderly visitors sit
-  down and watch; you can sit too (`E`).
-- **"+ Visitor"** spawns someone at the edge of the audience area who hurries to the wall (~4–6 s).
+- **Wayfinding**: LED light strips in the paving pulse from the entrances to the front of the stage.
+- **"+ Visitor"** spawns someone at the edge of the audience area who hurries to the stage (~4–6 s).
+- **Performance**: static scenery is merged per material, each character is a single skinned mesh,
+  the wall's scene renders at 30 Hz and the resolution adapts to the machine. `?fps` shows an FPS
+  counter; `__bench(60)` in the console measures frame cost.
 
 ## Files
 
 - `src/world.js`: Guldhedstorget model (buildings, paving, trees, lamps, bollards, sky, time of day)
-- `src/installation.js`: LED wall, archive scene rendered to the wall, tracking/levels/duos/filter, pillar, lights, sensor view
+- `src/installation.js`: LED wall, the 1944 scene rendered to the wall, stage, tracking, chat/dance groups, filter, lights, sensor view
+- `src/facts.js`: the historical facts in the avatars' speech bubbles
+- `src/batch.js`: static batching (merges unmoving meshes per material)
 - `src/character.js`: articulated rig, outfits, procedural gestures
 - `src/crowd.js`: visitor AI
 - `src/player.js`: third-person controller

@@ -8,3 +8,4 @@ dist
 .env*
 .wrangler
 .wrangler
+*.swp

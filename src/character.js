@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // ---------------------------------------------------------------------------
 // Articulated character rig.
@@ -55,6 +56,9 @@ function part(parent, geom, mat, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1) {
   return m;
 }
 
+const RIG_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75 });
+const RIG_MAT_DOUBLE = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, side: THREE.DoubleSide });
+
 const _e = new THREE.Euler();
 const _q = new THREE.Quaternion();
 const _v = new THREE.Vector3();
@@ -92,7 +96,59 @@ export class Rig {
       j['shin' + s].add(j['foot' + s]); j['foot' + s].position.set(0, -0.43, 0);
     }
     buildBody(this, style);
-    this.root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    this.skinParts();
+  }
+
+  /**
+   * Performance: the body is built from ~65 small meshes (one per capsule, sphere, hat brim…).
+   * Merge them into ONE SkinnedMesh whose bones are the joint groups, so a character costs one
+   * draw call (plus one for its shadow) instead of ~130. Each part keeps its colour as a vertex
+   * colour and is skinned 100 % to the joint it was attached to, so animation is unchanged.
+   */
+  skinParts() {
+    this.root.updateMatrixWorld(true);
+    const rootInv = new THREE.Matrix4().copy(this.root.matrixWorld).invert();
+    const jointSet = new Set(Object.values(this.joints));
+    const geos = [];
+    let doubleSided = false;
+    const m = new THREE.Matrix4();
+    JOINTS.forEach((name, boneIndex) => {
+      const stack = [...this.joints[name].children];
+      while (stack.length) {
+        const o = stack.pop();
+        if (jointSet.has(o)) continue; // belongs to another bone
+        stack.push(...o.children);
+        if (!o.isMesh) continue;
+        const g = (o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone());
+        g.applyMatrix4(m.multiplyMatrices(rootInv, o.matrixWorld));
+        const n = g.attributes.position.count;
+        const c = o.material.color;
+        const color = new Float32Array(n * 3);
+        const skinIndex = new Uint16Array(n * 4);
+        const skinWeight = new Float32Array(n * 4);
+        for (let i = 0; i < n; i++) {
+          color[i * 3] = c.r; color[i * 3 + 1] = c.g; color[i * 3 + 2] = c.b;
+          skinIndex[i * 4] = boneIndex;
+          skinWeight[i * 4] = 1;
+        }
+        const out = new THREE.BufferGeometry();
+        out.setAttribute('position', g.attributes.position);
+        out.setAttribute('normal', g.attributes.normal);
+        out.setAttribute('color', new THREE.BufferAttribute(color, 3));
+        out.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndex, 4));
+        out.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeight, 4));
+        geos.push(out);
+        if (o.material.side === THREE.DoubleSide) doubleSided = true;
+        o.removeFromParent();
+      }
+    });
+    const mesh = new THREE.SkinnedMesh(mergeGeometries(geos, false), doubleSided ? RIG_MAT_DOUBLE : RIG_MAT);
+    mesh.castShadow = true;
+    mesh.frustumCulled = false; // bounds change with the pose
+    this.root.add(mesh);
+    this.root.updateMatrixWorld(true);
+    mesh.bind(new THREE.Skeleton(JOINTS.map((n) => this.joints[n])));
+    this.mesh = mesh;
   }
 
   resetTargets() {
@@ -144,6 +200,8 @@ export class Rig {
 
   dispose() {
     this.root.removeFromParent();
+    this.mesh?.geometry.dispose();
+    this.mesh?.skeleton.dispose();
   }
 }
 
@@ -396,62 +454,62 @@ export const PLAYER_STYLE = {
 /** Historical avatar roster for the screen. */
 export const HISTORICAL = [
   {
-    id: 'gentleman', sv: 'Herren med hatten', en: 'The gentleman in the fedora', era: '1944',
+    id: 'gentleman', name: 'The Gentleman', en: 'The gentleman in the fedora', era: '1944',
     skin: '#e9bf9d', hair: '#2a1d15', hairStyle: 'short', top: '#3b3f47', bottom: '#33373f', shoes: '#1a1210',
     coat: '#474b52', coatLen: 0.35, tie: '#7a1f2b', shirtCollar: '#f4f1ea', hat: 'fedora', hatColor: '#3d352c',
   },
   {
-    id: 'lady', sv: 'Damen i kappa', en: 'The lady in the long coat', era: '1944',
+    id: 'lady', name: 'The Lady in the Long Coat', en: 'The lady in the long coat', era: '1944',
     skin: '#f3cfb4', hair: '#6b3a22', hairStyle: 'bob', top: '#7b2d3a', bottom: '#7b2d3a', shoes: '#2a1510',
     coat: '#7b2d3a', coatLen: 0.62, hat: 'cloche', hatColor: '#2b2b3a', stockings: '#caa58b', bag: '#1b1b1b', skirt: true, skirtLen: 0.62, lips: '#b0323b', bust: true,
   },
   {
-    id: 'conductor', sv: 'Spårvagnskonduktören', en: 'The tram conductor', era: '1944',
+    id: 'conductor', name: 'The Tram Conductor', en: 'The tram conductor', era: '1944',
     skin: '#e3b08c', hair: '#3b2a1d', hairStyle: 'short', top: '#1f2a44', bottom: '#1f2a44', shoes: '#0e0e0e',
     jacket: '#1c2740', jacketZip: '#d4a13a', hat: 'cap', hatColor: '#1c2740', hatBadge: '#d4a13a', satchel: '#4a321d', belt: '#111',
   },
   {
-    id: 'baker', sv: 'Bagaren', en: 'The baker from the corner shop', era: '1944',
+    id: 'baker', name: 'The Baker', en: 'The baker from the corner shop', era: '1944',
     skin: '#f0c4a0', hair: '#7a5a3a', hairStyle: 'short', top: '#f5f3ee', bottom: '#d9d5cb', shoes: '#3a2a1a',
     apron: '#ffffff', hat: 'baker', shortSleeve: true, beard: false,
   },
   {
-    id: 'dancer', sv: 'Dansösen från dansbanan', en: 'The dancer from the old dance hall', era: '1958',
+    id: 'dancer', name: 'The Dance-Hall Dancer', en: 'The dancer from the old dance hall', era: '1958',
     skin: '#f1c9a8', hair: '#c9923e', hairStyle: 'curly', top: '#c0283a', bottom: '#c0283a', shoes: '#c0283a',
     dress: '#c0283a', polka: true, skirtLen: 0.5, stockings: '#e8c3a8', lips: '#b0323b', bust: true, belt: '#111', shortSleeve: true,
   },
   {
-    id: 'postman', sv: 'Brevbäraren', en: 'The postman on his round', era: '1958',
+    id: 'postman', name: 'The Postman', en: 'The postman on his round', era: '1958',
     skin: '#d99f7a', hair: '#2a1d15', hairStyle: 'short', top: '#2a4d7a', bottom: '#223a5c', shoes: '#111',
     hat: 'cap', hatColor: '#2a4d7a', hatBadge: '#f1c453', satchel: '#6b4423', cuffs: '#f1c453',
   },
   {
-    id: 'schoolboy', sv: 'Skolpojken', en: 'The schoolboy with knee socks', era: '1944',
+    id: 'schoolboy', name: 'The Schoolboy', en: 'The schoolboy with knee socks', era: '1944',
     skin: '#f4d0b0', hair: '#a37a45', hairStyle: 'short', top: '#5a6b7a', bottom: '#4a3f35', shoes: '#2a1a10',
     shorts: true, socks: '#8a8a8a', hat: 'flatcap', hatColor: '#6b5a4a', scale: 0.8, satchel: '#6b4423',
   },
   {
-    id: 'worker', sv: 'Byggarbetaren', en: 'The builder who raised Guldheden', era: '1944',
+    id: 'worker', name: 'The Builder', en: 'The builder who raised Guldheden', era: '1944',
     skin: '#d8a27d', hair: '#4a3122', hairStyle: 'short', top: '#e9e2cf', bottom: '#4a4a52', shoes: '#2b1d12',
     suspenders: '#3a2a1a', hat: 'flatcap', hatColor: '#3f3a33', shortSleeve: true, beard: true,
   },
   {
-    id: 'nurse', sv: 'Sjuksköterskan', en: 'The nurse from Sahlgrenska', era: '1958',
+    id: 'nurse', name: 'The Nurse', en: 'The nurse from Sahlgrenska', era: '1958',
     skin: '#eec3a2', hair: '#3b2a1d', hairStyle: 'bun', top: '#f7f7f7', bottom: '#f7f7f7', shoes: '#f0f0f0',
     dress: '#f7f7f7', skirtLen: 0.5, hat: 'nurse', stockings: '#e8d8c8', bust: true, belt: '#2a4d7a',
   },
   {
-    id: 'photographer', sv: 'Fotografen', en: 'The newspaper photographer', era: '1958',
+    id: 'photographer', name: 'The Photographer', en: 'The newspaper photographer', era: '1958',
     skin: '#e0b08a', hair: '#1a1a1a', hairStyle: 'short', top: '#6b5a45', bottom: '#3a3530', shoes: '#1a1210',
     jacket: '#6b5a45', hat: 'beret', camera: true, glasses: true,
   },
   {
-    id: 'grandma', sv: 'Mormor med kassen', en: 'Grandmother with her shopping bag', era: '1958',
+    id: 'grandma', name: 'Grandma with her Shopping Bag', en: 'Grandmother with her shopping bag', era: '1958',
     skin: '#f0c8a8', hair: '#d8d8d8', hairStyle: 'bun', top: '#3f5a4a', bottom: '#3f5a4a', shoes: '#2a1a10',
     coat: '#3f5a4a', coatLen: 0.62, skirt: true, skirtLen: 0.62, stockings: '#b89b86', bag: '#6b4423', glasses: true, scarf: '#a33a3a', bust: true,
   },
   {
-    id: 'sailor', sv: 'Sjömannen på permis', en: 'The sailor on shore leave', era: '1944',
+    id: 'sailor', name: 'The Sailor on Shore Leave', en: 'The sailor on shore leave', era: '1944',
     skin: '#d49a74', hair: '#2a1d15', hairStyle: 'short', top: '#f4f4f4', bottom: '#1b2540', shoes: '#0e0e0e',
     shirtCollar: '#1b2540', hat: 'boater', scarf: '#1b2540',
   },
@@ -611,48 +669,6 @@ export function animGesture(rig, name, t) {
   return true;
 }
 
-/** Duo animations played by paired avatars on the screen. role: 0 or 1, t: seconds. */
-export function animDuo(rig, type, role, t) {
-  const side = role === 0 ? 1 : -1; // role 0 stands on the left of the pair
-  switch (type) {
-    case 'handshake': {
-      const pump = Math.sin(t * 10) * 0.12;
-      if (side > 0) {
-        rig.set('uArmR', -0.9 + pump, 0, 0.25);
-        rig.set('fArmR', -0.3, 0, 0);
-      } else {
-        rig.set('uArmR', -0.9 + pump, 0, 0.25);
-        rig.set('fArmR', -0.3, 0, 0);
-      }
-      rig.set('head', 0.1, 0, 0);
-      rig.set('spine', 0.1, 0, 0);
-      break;
-    }
-    case 'swing': {
-      const s = Math.sin(t * 5), c = Math.cos(t * 5);
-      rig.set('uArmL', -0.6, 0, 0.9 + 0.3 * s);
-      rig.set('uArmR', -0.6, 0, -0.9 + 0.3 * s);
-      rig.set('fArmL', -0.4, 0, 0);
-      rig.set('fArmR', -0.4, 0, 0);
-      rig.set('thighL', -0.4 * Math.max(0, s), 0, 0);
-      rig.set('thighR', -0.4 * Math.max(0, -s), 0, 0);
-      rig.set('shinL', 0.6 * Math.max(0, s), 0, 0);
-      rig.set('shinR', 0.6 * Math.max(0, -s), 0, 0);
-      rig.set('hips', 0, 0, c * 0.08);
-      rig.offsetTarget.y = 0.05 * Math.abs(s);
-      break;
-    }
-    case 'hattip': {
-      rig.set('spine', 0.35 * Math.max(0, Math.sin(t * 1.6)), 0, 0);
-      rig.set('uArmR', -0.4, 0, -2.2);
-      rig.set('fArmR', -1.5, 0, 0);
-      rig.set('uArmL', 0, 0, 0.1);
-      break;
-    }
-    default:
-  }
-}
-
 /** Seated on a bench (seat height 0.45 m), hands resting in the lap. */
 export function animSit(rig, t, seed = 0) {
   const s = rig.style.scale ?? 1;
@@ -670,4 +686,25 @@ export function animSit(rig, t, seed = 0) {
   rig.set('fArmL', -0.75, 0, 0);
   rig.set('fArmR', -0.75, 0, 0);
   rig.set('head', 0.05, Math.sin(t * 0.3 + seed) * 0.35, 0);
+}
+
+/**
+ * Two avatars chatting: the speaker talks with their hands and nods, the listener nods along.
+ * Mirroring is paused while chatting.
+ */
+export function animTalk(rig, t, speaking, seed = 0) {
+  const s = Math.sin(t * 3.1 + seed), c = Math.cos(t * 2.3 + seed);
+  rig.set('head', 0.08 + (speaking ? 0.06 * Math.sin(t * 5 + seed) : 0.04 * Math.sin(t * 1.7 + seed)), 0, speaking ? 0.06 * c : 0.1);
+  rig.set('chest', 0.03, speaking ? 0.08 * s : 0, 0);
+  if (speaking) {
+    rig.set('uArmR', -0.55 - 0.25 * Math.max(0, s), 0, -0.25 - 0.1 * c);
+    rig.set('fArmR', -1.2 - 0.3 * Math.max(0, c), 0, 0);
+    rig.set('handR', 0, 0, 0.3 * s);
+    rig.set('uArmL', -0.3 * Math.max(0, -s), 0, 0.15);
+    rig.set('fArmL', -0.6 * Math.max(0, -s), 0, 0);
+  } else {
+    // listening: arms relaxed, one hand on the hip
+    rig.set('uArmL', 0.1, 0, 0.55);
+    rig.set('fArmL', -1.6, 0, 0);
+  }
 }

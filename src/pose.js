@@ -228,7 +228,7 @@ export class PoseDriver {
       }
       ctx.font = 'bold 13px system-ui, sans-serif';
       const top = p.image[0];
-      ctx.fillText(k === 0 ? 'DU' : 'GÄST', (1 - top.x) * W - 10, Math.max(14, top.y * H - 24));
+      ctx.fillText(k === 0 ? 'YOU' : 'GUEST', (1 - top.x) * W - 10, Math.max(14, top.y * H - 24));
     });
     ctx.restore();
   }

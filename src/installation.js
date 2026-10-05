@@ -1,33 +1,28 @@
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { Rig, HISTORICAL, animIdle, animWalk, animDuo, animGesture, BONES, JOINTS, M } from './character.js';
-import { LAYOUT, toScreenLocal, screenToWorld, inSensorZone } from './world.js';
+import { Rig, HISTORICAL, animIdle, animWalk, animTalk, animGesture, BONES, JOINTS, M } from './character.js';
+import { FACTS } from './facts.js';
+import { LAYOUT, STAGE, toScreenLocal, screenToWorld, onStage, hipRoof } from './world.js';
 import { hashStr } from './net.js';
+import { staticBatch } from './batch.js';
 import {
-  rng, makeCanvas, toTexture, kidsDrawingTexture, gradientSkyTexture, signTexture, sparkleTexture,
-  heartTexture, zoneDecalTexture, plaqueTexture, backPanelTexture,
+  rng, makeCanvas, toTexture, gradientSkyTexture, signTexture, sparkleTexture,
+  heartTexture, stageFloorTexture, backPanelTexture,
 } from './textures.js';
 
 export const LEVELS = [
-  { sv: 'Väntläge', en: 'Attract mode' },
-  { sv: 'Solo', en: 'One visitor' },
-  { sv: 'Duo', en: 'Two visitors' },
-  { sv: 'Grupp', en: 'Group' },
-  { sv: 'Fest', en: 'Festival' },
+  { en: 'Attract mode', short: 'Waiting' },
+  { en: 'One visitor', short: 'Solo' },
+  { en: 'Two visitors', short: 'Duo' },
+  { en: 'Group', short: 'Group' },
+  { en: 'Festival', short: 'Festival' },
 ];
 
+// The wall only shows the 1940s square (feedback v2: the 1958 and children's-drawing eras were removed).
 export const THEMES = {
-  1944: { caption: 'GULDHEDSTORGET · 1944', sub: 'Ur arkivet', button: '1944', color: '#e0a040' },
-  1958: { caption: 'GULDHEDEN · 1958', sub: 'Torget i sin glans', button: '1958', color: '#2ec4b6' },
-  kids: { caption: 'BARNENS TORG', sub: 'Teckningar av klass 2B, Guldhedsskolan', button: 'BARNENS', color: '#ff5d8f' },
+  1944: { caption: 'GULDHEDSTORGET · 1944', sub: 'From the archive' },
 };
-const THEME_ORDER = ['1944', '1958', 'kids'];
 
-const DUO_TYPES = {
-  swing: { sv: 'Swingdans', en: 'swing dance' },
-  handshake: { sv: 'Handslag', en: 'handshake' },
-  hattip: { sv: 'Hattlyft', en: 'hat tip' },
-};
 
 const SCREEN = LAYOUT.screen;
 const SCREEN_W = SCREEN.z1 - SCREEN.z0;
@@ -39,7 +34,7 @@ const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vecto
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
-export { inSensorZone };
+export { onStage };
 
 export class Installation {
   constructor(scene, renderer, { obstacles, onEvent = () => {}, audio = null }) {
@@ -54,18 +49,16 @@ export class Installation {
     this.level = 0;
     this.count = 0;
     this.theme = '1944';
-    this.themeTimer = 0;
-    this.lastPress = -999;
     this.fade = 1;
-    this.pendingTheme = null;
     this.tracked = new Map(); // personId -> track
-    this.duos = new Map(); // pairKey -> duo
-    this.cooldowns = new Map();
+    this.groups = new Map(); // memberKey -> chat/dance group
+    this.talking = false;
+    this.dancing = false;
+    this.colour = 0; // 0 = black & white (nobody on stage), 1 = full colour
+    this.spotLevel = 0;
     this.sensorView = false;
     this.muted = false;
-    this.autoRotate = true; // only the room host auto-rotates in multiplayer
     this.onShared = null; // (patch) => void, called when the local user changes shared state
-    this.duoCounts = new Map();
     this.toast = null;
     this.overlayDirty = true;
     this.overlayTimer = 0;
@@ -77,7 +70,6 @@ export class Installation {
     this.buildArchive();
     this.buildScreen();
     this.buildHardware(obstacles);
-    this.buildKiosk(obstacles);
     this.buildLights(obstacles);
     this.buildSensorViz();
     this.buildGuides();
@@ -85,10 +77,10 @@ export class Installation {
     this.hw.position.set(LAYOUT.screen.cx, 0, LAYOUT.screen.cz);
     this.hw.rotation.y = LAYOUT.screen.rot;
     this.hw.updateMatrixWorld(true);
-    this.kioskPos = this.kiosk.getWorldPosition(new THREE.Vector3());
     this.finalizeSeats();
+    for (const s of this.spots) s.beam.userData.dynamic = true; // shown/hidden with the level
+    staticBatch(this.hw);
     this.guidePhase = 0;
-    this.setTheme('1944', true);
   }
 
   // =====================================================================
@@ -97,9 +89,9 @@ export class Installation {
   buildArchive() {
     this.rt = new THREE.WebGLRenderTarget(RT_W, RT_H, { samples: 4, type: THREE.HalfFloatType });
     const s = (this.archive = new THREE.Scene());
-    this.archiveCam = new THREE.PerspectiveCamera(25, RT_W / RT_H, 0.1, 200);
+    this.archiveCam = new THREE.PerspectiveCamera(28, RT_W / RT_H, 0.1, 200);
     this.archiveCam.position.set(0, 1.55, 9.5);
-    this.archiveCam.lookAt(0, 1.3, -1);
+    this.archiveCam.lookAt(0, 2.0, -1); // tilted up a little so roofs and sky show, like the 1944 photo
 
     const hemi = new THREE.HemisphereLight('#fff4e0', '#6a5a48', 1.1);
     s.add(hemi);
@@ -113,21 +105,15 @@ export class Installation {
     s.add(key, key.target);
     this.stageKey = key;
 
-    this.themes = {
-      1944: this.buildStage1944(),
-      1958: this.buildStage1958(),
-      kids: this.buildStageKids(),
-    };
-    for (const g of Object.values(this.themes)) { g.visible = false; s.add(g); }
-    this.skies = {
-      1944: gradientSkyTexture('#7fa7d6', '#dfe8ef'),
-      1958: gradientSkyTexture('#5b93d1', '#e8eef2'),
-      kids: this.kidsTexture,
-    };
+    const stage = this.buildStage1944();
+    staticBatch(stage);
+    s.add(stage);
+    s.background = gradientSkyTexture('#4f7f86', '#c3d3c8'); // the teal Agfacolor sky of the 1944 photo
 
     // festive layers that escalate with the crowd
     this.fx = new THREE.Group();
     s.add(this.fx);
+    this.buildCars();
     this.buildBunting();
     this.buildStageLights();
     this.buildConfetti();
@@ -142,8 +128,8 @@ export class Installation {
       rig.root.visible = false;
       s.add(rig.root);
       this.extras.push({
-        rig, active: false, x: 0, z: -5 - r() * 3.5, dir: 1, speed: 0.8 + r() * 0.5, phase: r() * 10,
-        seed: r() * 10, lane: -5 - r() * 3.5, danceOffset: r() * 3,
+        rig, active: false, x: 0, z: -3.6 - r(), dir: 1, speed: 0.8 + r() * 0.5, phase: r() * 10,
+        seed: r() * 10, lane: -3.6 - r(), danceOffset: r() * 3, // on the paving in front of the lawn
       });
     }
 
@@ -179,186 +165,167 @@ export class Installation {
     return im;
   }
 
+  /**
+   * Guldhedstorget in 1944, rebuilt from the colour photo of the square: the low shop building with a
+   * dark roof and red awning on the left, the grey point block behind it, the long white building with
+   * a red tile roof and its tobacconist and café on the right, the flagpole, the lawn with green benches,
+   * white flower boxes and young birches, and a street where 1940s cars drive past.
+   */
   buildStage1944() {
     const g = new THREE.Group();
     const r = rng(44);
+    const add = (geo, mat, x, y, z, cast = true) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.castShadow = cast;
+      m.receiveShadow = true;
+      g.add(m);
+      return m;
+    };
+    const winMat = M('#2c3238', 0.25, 0.4), frameMat = M('#f2efe6', 0.7);
     // pale concrete slabs
     const c = makeCanvas(256, 256), ctx = c.getContext('2d');
-    ctx.fillStyle = '#bdb6a6'; ctx.fillRect(0, 0, 256, 256);
-    ctx.strokeStyle = '#8f887a'; ctx.lineWidth = 3;
+    ctx.fillStyle = '#c4bdac'; ctx.fillRect(0, 0, 256, 256);
+    ctx.strokeStyle = '#968e7e'; ctx.lineWidth = 3;
     for (let i = 0; i <= 256; i += 64) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 256); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(256, i); ctx.stroke(); }
     g.add(this.stageGround('#ffffff', toTexture(c), 3));
-    // lawn with chairs (from the 1944 photo)
-    const lawn = new THREE.Mesh(new THREE.BoxGeometry(12, 0.12, 5), M('#5f8f3c', 1));
-    lawn.position.set(-4, 0.06, -10.5);
-    lawn.receiveShadow = true;
-    g.add(lawn);
-    for (let i = 0; i < 7; i++) {
-      const ch = new THREE.Group();
-      const seat = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.06, 0.6), M('#2f6b3a', 0.7));
-      seat.position.y = 0.4; ch.add(seat);
-      const back = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 0.06), M('#2f6b3a', 0.7));
-      back.position.set(0, 0.68, -0.3); back.rotation.x = -0.35; ch.add(back);
-      for (const x of [-0.25, 0.25]) for (const z of [-0.25, 0.25]) {
-        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.4, 0.04), M('#e8e2d0', 0.6));
-        leg.position.set(x, 0.2, z); ch.add(leg);
+    // the street the cars use, with a kerb on each side
+    add(new THREE.BoxGeometry(80, 0.02, 2.8), M('#6d6c68', 0.95), 0, 0.012, -11.75, false);
+    add(new THREE.BoxGeometry(80, 0.1, 0.25), M('#9b968c', 0.9), 0, 0.05, -10.25, false);
+    add(new THREE.BoxGeometry(80, 0.1, 0.25), M('#9b968c', 0.9), 0, 0.05, -13.25, false);
+
+    // lawn with green slatted benches and white flower boxes (front left in the photo)
+    add(new THREE.BoxGeometry(17, 0.1, 4.6), M('#5e8f3a', 1), -10.5, 0.05, -7.3, false);
+    const benchGreen = M('#2d5a39', 0.7), white = M('#f3efe4', 0.8);
+    const flowerCols = ['#d2384a', '#e9677a', '#f2c14e', '#c43b6b'];
+    for (let i = 0; i < 6; i++) {
+      const x = -17.5 + i * 2.7;
+      // bench: seat + back + white legs
+      add(new THREE.BoxGeometry(1.7, 0.06, 0.45), benchGreen, x, 0.48, -6.2);
+      add(new THREE.BoxGeometry(1.7, 0.45, 0.05), benchGreen, x, 0.78, -6.45).rotation.x = -0.15;
+      for (const lx of [-0.75, 0.75]) add(new THREE.BoxGeometry(0.06, 0.48, 0.4), white, x + lx, 0.24, -6.25);
+      // flower box between the benches
+      if (i < 5) {
+        const bx = x + 1.35;
+        add(new THREE.BoxGeometry(0.9, 0.42, 0.6), white, bx, 0.31, -6.6);
+        for (let k = 0; k < 7; k++) {
+          add(new THREE.SphereGeometry(0.1 + r() * 0.05, 8, 6), M(flowerCols[(i + k) % flowerCols.length], 0.8), bx + (r() - 0.5) * 0.7, 0.6, -6.6 + (r() - 0.5) * 0.4, false);
+        }
       }
-      ch.position.set(-9 + i * 1.6 + r() * 0.3, 0.12, -9.8 - r() * 1.5);
-      ch.rotation.y = (r() - 0.5) * 0.8;
-      ch.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-      g.add(ch);
     }
-    // tall white block (left) & low shop building with red awning (right)
-    const block = new THREE.Mesh(new THREE.BoxGeometry(12, 24, 8), M('#ece6d8', 0.95));
-    block.position.set(-11, 12, -26);
-    g.add(block);
-    this.windowGrid(g, -15.5, 2.2, -21.95, 5, 8, 2.2, 2.8, 1.2, 1.5, M('#3b4450', 0.3, 0.4));
-    const shops = new THREE.Mesh(new THREE.BoxGeometry(24, 7, 6), M('#e9dcbc', 0.95));
-    shops.position.set(9, 3.5, -17);
-    g.add(shops);
-    this.windowGrid(g, -1.5, 5.1, -13.95, 9, 1, 2.6, 0, 1.4, 1.4, M('#3b4450', 0.3, 0.4));
-    this.windowGrid(g, -1.8, 1.4, -13.95, 6, 1, 3.8, 0, 3.0, 2.2, M('#2a3038', 0.2, 0.5));
-    const awning = new THREE.Mesh(new THREE.BoxGeometry(24, 0.12, 1.6), M('#b8322a', 0.8));
-    awning.position.set(9, 3.1, -13.3);
-    awning.rotation.x = 0.35;
-    awning.castShadow = true;
-    g.add(awning);
-    for (const [txt, x] of [['SPECERIER', 3], ['KONDITORI', 13]]) {
-      const sgn = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.6), new THREE.MeshStandardMaterial({ map: signTexture(txt, { bg: '#1f2d24', fg: '#f3e6c4' }) }));
-      sgn.position.set(x, 3.9, -13.9);
+
+    // young birches along the lawn and the street
+    const birchBark = M('#ece8de', 0.8), birchMark = M('#2b2724', 0.9), birchLeaf = M('#7fa24a', 1);
+    for (const [x, z] of [[-15.5, -9.4], [-9.5, -9.6], [-4.2, -9.4], [5.5, -9.5], [11, -9.4], [16.5, -9.6]]) {
+      add(new THREE.CylinderGeometry(0.07, 0.1, 4.2, 8), birchBark, x, 2.1, z);
+      for (let k = 0; k < 4; k++) add(new THREE.BoxGeometry(0.16, 0.05, 0.16), birchMark, x, 0.6 + k * 0.85 + r() * 0.3, z, false);
+      for (let k = 0; k < 4; k++) {
+        const b = add(new THREE.IcosahedronGeometry(0.75 + r() * 0.35, 1), birchLeaf, x + (r() - 0.5) * 1.1, 3.6 + r() * 1.3, z + (r() - 0.5) * 0.8);
+        b.scale.y = 1.3;
+      }
+    }
+    // globe street lamp on the left
+    add(new THREE.CylinderGeometry(0.05, 0.08, 4.4, 8), M('#1c1c1c', 0.5, 0.5), -13.5, 2.2, -4.8);
+    add(new THREE.SphereGeometry(0.28, 16, 12), M('#f7f2e2', 0.3, 0, { emissive: '#ffe4b0', emissiveIntensity: 0.25 }), -13.5, 4.55, -4.8);
+
+    // left: low shop building with a dark roof, small triangular dormers and a long red awning
+    add(new THREE.BoxGeometry(18, 3.4, 7), M('#e9e3d2', 0.95), -16, 1.7, -18.5);
+    const lowRoof = add(hipRoof(7.8, 18.8, 3.4), M('#3d4148', 0.7, 0.05, { side: THREE.DoubleSide }), -16, 3.4, -18.5);
+    lowRoof.rotation.y = Math.PI / 2;
+    for (const x of [-22, -18.5, -15, -11.5]) {
+      const tri = new THREE.Shape([new THREE.Vector2(-0.5, 0), new THREE.Vector2(0.5, 0), new THREE.Vector2(0, 0.75)]);
+      add(new THREE.ShapeGeometry(tri), M('#f0ede4', 0.6), x, 4.65, -16.05, false); // sits on the roof slope
+    }
+    this.windowGrid(g, -23.5, 1.3, -14.97, 6, 1, 3, 0, 2.3, 1.8, winMat);
+    const awning = add(new THREE.BoxGeometry(18, 0.1, 1.5), M('#b5332b', 0.8), -16, 2.85, -14.3);
+    awning.rotation.x = 0.32;
+    add(new THREE.BoxGeometry(18, 0.28, 0.06), M('#b5332b', 0.8), -16, 2.62, -13.58, false);
+
+    // behind: the grey-beige point block, nine storeys
+    add(new THREE.BoxGeometry(10, 27, 9), M('#b8b0a2', 0.95), -6.5, 13.5, -29);
+    this.windowGrid(g, -10.3, 2.2, -24.47, 4, 9, 2.5, 2.9, 1.1, 1.35, winMat);
+    for (let fl = 1; fl < 9; fl += 2) add(new THREE.BoxGeometry(1.8, 0.12, 0.7), M('#9d968a', 0.9), -2.8, 1.5 + fl * 2.9, -24.2);
+    // far left: a block still under construction, with scaffolding
+    add(new THREE.BoxGeometry(12, 9, 8), M('#cfc8b8', 0.95), -31, 4.5, -27);
+    const pole = M('#6b5a44', 0.9);
+    for (let x = -37; x <= -25; x += 1.5) add(new THREE.BoxGeometry(0.08, 11, 0.08), pole, x, 5.5, -22.7, false);
+    for (let y = 1.5; y <= 10.5; y += 1.8) add(new THREE.BoxGeometry(12.5, 0.08, 0.08), pole, -31, y, -22.7, false);
+
+    // right: the long white building with a red tile roof, café and tobacconist on the ground floor
+    const LX = 9, LW = 30, LD = 7, LH = 8.2;
+    add(new THREE.BoxGeometry(LW, LH, LD), M('#f1eee6', 0.95), LX, LH / 2, -19.5);
+    const roof = add(hipRoof(LD + 0.8, LW + 0.8, 2.4), M('#b0523a', 0.85, 0, { side: THREE.DoubleSide }), LX, LH, -19.5);
+    roof.rotation.y = Math.PI / 2;
+    add(new THREE.BoxGeometry(0.8, 1.6, 0.8), M('#9a3f2c', 0.9), LX + 6, LH + 1.6, -20); // chimney
+    // two rows of upper windows, some with small balconies
+    for (let row = 0; row < 2; row++) {
+      for (let k = 0; k < 10; k++) {
+        const x = LX - LW / 2 + 1.6 + k * 2.95, y = 4.4 + row * 2.4;
+        add(new THREE.BoxGeometry(1.25, 1.15, 0.05), frameMat, x, y, -15.98, false);
+        add(new THREE.BoxGeometry(1.05, 0.95, 0.06), winMat, x, y, -15.97, false);
+        if ((k + row) % 4 === 1) add(new THREE.BoxGeometry(1.5, 0.08, 0.5), M('#dcd6c8', 0.8), x, y - 0.65, -15.7);
+      }
+    }
+    // shopfronts + painted sign band
+    this.windowGrid(g, LX - LW / 2 + 2.2, 1.45, -15.97, 7, 1, 4.1, 0, 3.2, 2.1, winMat);
+    add(new THREE.BoxGeometry(LW, 0.55, 0.06), M('#e3ddd0', 0.8), LX, 3.0, -15.95, false);
+    for (const [txt, x, fg] of [['Tobacco', LX - 7, '#b5332b'], ['Café', LX + 3, '#2d5a39'], ['Flowers', LX + 10, '#b5332b']]) {
+      const sgn = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.5), new THREE.MeshStandardMaterial({ map: signTexture(txt, { bg: '#e3ddd0', fg, font: 'italic bold 62px Georgia, serif' }) }));
+      sgn.position.set(x, 3.0, -15.9);
       g.add(sgn);
     }
-    // flagpole with Swedish flag
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 11, 10), M('#f4f1ea', 0.5));
-    pole.position.set(-6.5, 5.5, -12.5);
-    pole.castShadow = true;
-    g.add(pole);
+
+    // the flagpole with the Swedish flag
+    add(new THREE.CylinderGeometry(0.06, 0.09, 11, 10), M('#f4f1ea', 0.5), 0.5, 5.5, -10.4);
     const fc = makeCanvas(160, 100), fx = fc.getContext('2d');
     fx.fillStyle = '#006aa7'; fx.fillRect(0, 0, 160, 100);
     fx.fillStyle = '#fecc00'; fx.fillRect(50, 0, 20, 100); fx.fillRect(0, 40, 160, 20);
     const flagGeo = new THREE.PlaneGeometry(2.0, 1.25, 16, 4);
     flagGeo.translate(1.0, 0, 0);
     this.flag = new THREE.Mesh(flagGeo, new THREE.MeshStandardMaterial({ map: toTexture(fc, { wrap: false }), side: THREE.DoubleSide }));
-    this.flag.position.set(-6.45, 10.3, -12.5);
+    this.flag.userData.dynamic = true; // waves every frame
+    this.flag.position.set(0.55, 10.3, -10.4);
     this.flagBase = flagGeo.attributes.position.array.slice();
     g.add(this.flag);
-    // young trees and old lamps
-    for (const [x, z] of [[-14, -8], [2, -10], [-1, -11.5], [6, -9.5], [14, -10]]) {
-      const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 2.6, 8), M('#4a3d33', 1));
-      tr.position.set(x, 1.3, z); tr.castShadow = true; g.add(tr);
-      for (let k = 0; k < 3; k++) {
-        const b = new THREE.Mesh(new THREE.IcosahedronGeometry(0.8, 1), M('#4f7a33', 1));
-        b.position.set(x + (r() - 0.5) * 0.8, 3.0 + r() * 0.8, z + (r() - 0.5) * 0.8);
-        b.castShadow = true; g.add(b);
-      }
-    }
-    for (const x of [-12, 11]) {
-      const lp = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 4, 8), M('#1c1c1c', 0.5, 0.5));
-      lp.position.set(x, 2, -6.5); g.add(lp);
-      const gl = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 12), M('#f7f1e0', 0.3, 0, { emissive: '#ffd89a', emissiveIntensity: 0.3 }));
-      gl.position.set(x, 4.1, -6.5); g.add(gl);
-    }
     return g;
   }
 
-  buildStage1958() {
-    const g = new THREE.Group();
-    const r = rng(58);
-    // striped paving like the 1958 photo of Doktor Fries Torg
-    const c = makeCanvas(256, 256), ctx = c.getContext('2d');
-    ctx.fillStyle = '#b9b8b2'; ctx.fillRect(0, 0, 256, 256);
-    ctx.fillStyle = '#e6e5df';
-    for (let i = 0; i < 256; i += 32) ctx.fillRect(0, i, 256, 12);
-    g.add(this.stageGround('#ffffff', toTexture(c), 4));
-    // brick balcony block (left)
-    const blk = new THREE.Mesh(new THREE.BoxGeometry(14, 13, 8), M('#b86a3e', 0.95));
-    blk.position.set(-12, 6.5, -22);
-    g.add(blk);
-    this.windowGrid(g, -17.5, 1.8, -17.95, 5, 4, 2.6, 3, 1.3, 1.5, M('#2f3a44', 0.3, 0.4));
-    for (let rr = 1; rr < 4; rr++) for (let cc = 0; cc < 3; cc++) {
-      const bal = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.9, 1.0), M('#f1ede4', 0.8));
-      bal.position.set(-16 + cc * 4, 1.2 + rr * 3, -17.4);
-      g.add(bal);
-    }
-    // cream building behind the shop row
-    const back = new THREE.Mesh(new THREE.BoxGeometry(26, 10, 8), M('#eadfc4', 0.95));
-    back.position.set(9, 5, -22);
-    g.add(back);
-    this.windowGrid(g, -2.5, 5.5, -17.95, 9, 2, 2.8, 2.6, 1.4, 1.4, M('#2f3a44', 0.3, 0.4));
-    // shop row with striped awnings & signs
-    const shops = new THREE.Mesh(new THREE.BoxGeometry(26, 3.8, 5), M('#f3efe6', 0.9));
-    shops.position.set(9, 1.9, -15.5);
-    g.add(shops);
-    const awnColors = [['#c0392b', '#f5f0e6'], ['#1f7a5a', '#f5f0e6'], ['#e0a040', '#fff7e6'], ['#2e5a88', '#f5f0e6']];
-    const names = ['MJÖLK & OST', 'BLOMMOR', 'KONDITORI', 'FRISÖR'];
-    for (let i = 0; i < 4; i++) {
-      const x = -1.5 + i * 6.3;
-      const ac = makeCanvas(128, 32), ax = ac.getContext('2d');
-      for (let k = 0; k < 16; k++) { ax.fillStyle = awnColors[i][k % 2]; ax.fillRect(k * 8, 0, 8, 32); }
-      const aw = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.08, 1.5), new THREE.MeshStandardMaterial({ map: toTexture(ac, { wrap: false }), roughness: 0.8 }));
-      aw.position.set(x, 2.9, -12.4); aw.rotation.x = 0.4; aw.castShadow = true;
-      g.add(aw);
-      const win = new THREE.Mesh(new THREE.BoxGeometry(4.4, 2.0, 0.05), M('#2a3038', 0.2, 0.5));
-      win.position.set(x, 1.3, -12.97); g.add(win);
-      const sg = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 0.6), new THREE.MeshStandardMaterial({ map: signTexture(names[i], { bg: '#fdfbf5', fg: awnColors[i][0], font: 'bold 50px Helvetica, Arial' }) }));
-      sg.position.set(x, 3.45, -12.96); g.add(sg);
-    }
-    // cars
-    const car = (x, z, col, ry) => {
-      const cg = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.62, 2.8, 8, 16), M(col, 0.35, 0.3));
-      body.rotation.z = Math.PI / 2; body.scale.set(1, 1, 1.35); body.position.y = 0.72; cg.add(body);
-      const cab = new THREE.Mesh(new THREE.SphereGeometry(0.9, 20, 12), M(col, 0.35, 0.3));
-      cab.scale.set(1.3, 0.7, 0.85); cab.position.set(-0.2, 1.15, 0); cg.add(cab);
-      const win = new THREE.Mesh(new THREE.SphereGeometry(0.91, 20, 12), M('#20262c', 0.1, 0.6));
-      win.scale.set(1.0, 0.55, 0.8); win.position.set(-0.2, 1.22, 0); cg.add(win);
-      for (const wx of [-1.25, 1.25]) for (const wz of [-0.72, 0.72]) {
-        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.22, 16), M('#111', 0.6));
-        w.rotation.x = Math.PI / 2; w.position.set(wx, 0.33, wz); cg.add(w);
-        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.23, 12), M('#eee', 0.2, 0.9));
-        hub.rotation.x = Math.PI / 2; hub.position.set(wx, 0.33, wz); cg.add(hub);
-      }
-      const bump = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.15, 1.7), M('#ddd', 0.2, 1));
-      bump.position.set(2.05, 0.5, 0); cg.add(bump);
-      const b2 = bump.clone(); b2.position.x = -2.05; cg.add(b2);
-      cg.position.set(x, 0, z); cg.rotation.y = ry;
-      cg.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-      g.add(cg);
-    };
-    car(13, -9, '#7fa9c9', 0.1);
-    car(-15, -9.5, '#c94f4f', -0.2);
-    // rock outcrop, benches, flower bed
-    const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(1.6, 1), M('#9b958a', 0.9));
-    rock.scale.set(2.2, 0.5, 1.2); rock.position.set(-4, 0.1, -9); rock.castShadow = true; g.add(rock);
-    for (const x of [2, 6]) {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(2, 0.12, 0.5), M('#2f6b3a', 0.7));
-      b.position.set(x, 0.45, -8.5); b.castShadow = true; g.add(b);
-      const bb = new THREE.Mesh(new THREE.BoxGeometry(2, 0.45, 0.08), M('#2f6b3a', 0.7));
-      bb.position.set(x, 0.75, -8.75); g.add(bb);
-    }
-    for (let i = 0; i < 26; i++) {
-      const f = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), M(['#e84a5f', '#ffcf40', '#ff8c42', '#b04dff'][i % 4], 0.8));
-      f.position.set(-9 + r() * 4, 0.25, -11 + r() * 1.2); g.add(f);
-    }
-    for (const x of [-9, 9.5]) {
-      const lp = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 5.5, 8), M('#dadada', 0.4, 0.6));
-      lp.position.set(x, 2.75, -7); g.add(lp);
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.12, 0.3), M('#dadada', 0.4, 0.6));
-      head.position.set(x + 0.35, 5.5, -7); g.add(head);
-    }
-    return g;
+  /** 1940s cars that drive past behind the square while the stage is empty. */
+  buildCars() {
+    this.cars = [
+      { color: '#27352c', dir: 1, lane: -11.2, delay: 0 },
+      { color: '#1b1b1d', dir: -1, lane: -12.3, delay: 6 },
+      { color: '#5d7a5c', dir: 1, lane: -11.2, delay: 13, van: true },
+    ].map((c) => {
+      const g = vintageCar(c.color, c.van);
+      g.visible = false;
+      this.archive.add(g);
+      return { ...c, g, x: 0, wait: c.delay, driving: false };
+    });
   }
 
-  buildStageKids() {
-    // the drawing fills the whole view as a background; the floor only catches shadows
-    const g = new THREE.Group();
-    this.kidsTexture = toTexture(kidsDrawingTexture(), { wrap: false });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 40), new THREE.ShadowMaterial({ opacity: 0.28 }));
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.z = -10;
-    floor.receiveShadow = true;
-    g.add(floor);
-    return g;
+  updateCars(dt) {
+    for (const c of this.cars) {
+      if (!c.driving) {
+        c.wait -= dt;
+        // new trips only start while nobody is on the stage
+        if (c.wait <= 0 && this.count === 0) {
+          c.driving = true;
+          c.x = -c.dir * 26;
+          c.g.visible = true;
+        }
+        continue;
+      }
+      c.x += c.dir * 5.5 * dt;
+      c.g.position.set(c.x, 0, c.lane);
+      c.g.rotation.y = c.dir > 0 ? 0 : Math.PI;
+      for (const w of c.g.userData.wheels) w.rotation.z -= c.dir * dt * 5.5 / 0.33;
+      if (Math.abs(c.x) > 26) {
+        c.driving = false;
+        c.g.visible = false;
+        c.wait = 4 + this.rand() * 8;
+      }
+    }
   }
 
   buildBunting() {
@@ -489,8 +456,8 @@ export class Installation {
           uv.y += grain * 0.004 * sin(time * 23.0);
           vec3 c = texture2D(map, uv).rgb;
           float l = dot(c, vec3(0.299, 0.587, 0.114));
-          vec3 sepia = vec3(l * 1.08, l * 0.93, l * 0.72);
-          vec3 col = mix(sepia, c, clamp(saturation, 0.0, 1.0));
+          vec3 mono = vec3(l * 1.03, l, l * 0.94); // vintage black & white, a touch warm
+          vec3 col = mix(mono, c, clamp(saturation, 0.0, 1.0));
           // extra vibrance above 1.0
           float vib = max(saturation - 1.0, 0.0);
           col = mix(vec3(dot(col, vec3(0.333))), col, 1.0 + vib * 1.5);
@@ -604,18 +571,35 @@ export class Installation {
       add(new THREE.BoxGeometry(0.28, 1.3, 0.3), M('#1b1d20', 0.6), x - 0.12, 2.3, z);
       add(new THREE.BoxGeometry(0.01, 1.2, 0.26), M('#2c2f33', 0.95), x - 0.265, 2.3, z);
     }
-    // floor decal marking the interaction zone
-    const decalGeo = new THREE.PlaneGeometry(18, 18);
-    decalGeo.rotateX(-Math.PI / 2);
-    const decal = new THREE.Mesh(decalGeo, new THREE.MeshStandardMaterial({ map: toTexture(zoneDecalTexture(), { wrap: false }), transparent: true, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2 }));
-    decal.rotation.y = Math.PI / 2;
-    decal.position.set(x - 0.2, 0.025, 0);
-    decal.receiveShadow = true;
-    this.hw.add(decal);
+    this.buildStageFloor();
     this.buildBenches(obstacles);
   }
 
-  /** Audience benches flanking the zone (outside the sensor field, so sitting doesn't drive an avatar). */
+  /** Flush wooden stage floor (no step up) with "STEP IN" and the footprint groups painted on it. */
+  buildStageFloor() {
+    const depth = STAGE.x1 - STAGE.x0, width = STAGE.z1 - STAGE.z0;
+    // plane local +x → lateral (+Z), local +y → towards the screen (+X), so the painted text faces the audience
+    const geo = new THREE.PlaneGeometry(width, depth);
+    geo.rotateX(-Math.PI / 2);
+    geo.rotateY(-Math.PI / 2);
+    const floor = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: toTexture(stageFloorTexture(), { wrap: false }), roughness: 0.82 }));
+    floor.position.set((STAGE.x0 + STAGE.x1) / 2, 0.02, (STAGE.z0 + STAGE.z1) / 2);
+    floor.receiveShadow = true;
+    this.hw.add(floor);
+    // thin steel edge, flush with the paving
+    const trim = M('#2a2d31', 0.4, 0.7);
+    const edge = (w, d, ex, ez) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(d, 0.03, w), trim);
+      m.position.set(ex, 0.015, ez);
+      m.receiveShadow = true;
+      this.hw.add(m);
+    };
+    edge(width + 0.12, 0.06, STAGE.x0, 0);
+    edge(0.06, depth, (STAGE.x0 + STAGE.x1) / 2, STAGE.z0);
+    edge(0.06, depth, (STAGE.x0 + STAGE.x1) / 2, STAGE.z1);
+  }
+
+  /** Benches along the stage's side edges. Sitting on one puts your avatar on the screen (standing). */
   buildBenches(obstacles) {
     const wood = M('#8a5a34', 0.8);
     const metal = M('#16181b', 0.4, 0.6);
@@ -645,6 +629,7 @@ export class Installation {
         post.position.set(bx, 0.65, -0.27);
         g.add(post);
       }
+      const benchIndex = this.benchCount = (this.benchCount ?? 0) + 1;
       for (const sx of [-0.45, 0.45]) {
         const seat = new THREE.Object3D();
         seat.position.set(sx, 0, -0.02);
@@ -652,17 +637,17 @@ export class Installation {
         const front = new THREE.Object3D();
         front.position.set(sx, 0, 0.85);
         g.add(front);
-        this.seatAnchors.push({ seat, front, group: g });
+        this.seatAnchors.push({ seat, front, group: g, bench: benchIndex });
         const lp = new THREE.Vector3(sx, 0, -0.05).applyAxisAngle(new THREE.Vector3(0, 1, 0), g.rotation.y).add(g.position);
         this.addObstacle(obstacles, { t: 'circle', x: lp.x, z: lp.z, r: 0.42 });
       }
       this.hw.add(g);
     };
-    // on both sides of the zone, angled towards the screen
-    bench(-3.6, 10.4, -2.5, 0); bench(-3.6, -10.4, -2.5, 0);
-    bench(-7.4, 11.8, -4, 0); bench(-7.4, -11.8, -4, 0);
-    // behind the zone, facing the screen (between the audience and the big street)
-    bench(-12.6, 3.6, 0, 3.6); bench(-12.6, -3.6, 0, -3.6);
+    // on the stage's left and right edges, turned in towards the middle and the screen
+    for (const side of [-1, 1]) {
+      bench(-2.6, side * 5.85, -1.2, 0);
+      bench(-5.2, side * 5.85, -3.8, 0);
+    }
   }
 
   /** Called once the installation group is placed in the world. */
@@ -672,83 +657,8 @@ export class Installation {
       const pos = a.seat.getWorldPosition(new THREE.Vector3());
       const front = a.front.getWorldPosition(v).clone();
       const heading = Math.atan2(front.x - pos.x, front.z - pos.z);
-      return { pos, front, heading, occupant: null };
+      return { pos, front, heading, occupant: null, bench: a.bench };
     });
-  }
-
-  buildKiosk(obstacles) {
-    const k = (this.kiosk = new THREE.Group());
-    k.position.set(-3.3, 0, -8.2);
-    this.hw.add(k);
-    const steel = M('#9aa1a8', 0.32, 0.85);
-    const add = (geo, mat, x, y, z, parent = k) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; };
-    add(new THREE.CylinderGeometry(0.32, 0.34, 0.03, 24), M('#3a3d42', 0.6, 0.4), 0, 0.015, 0);
-    add(new THREE.BoxGeometry(0.22, 1.0, 0.34), steel, 0, 0.51, 0);
-    // info plaque on the column front
-    const plaque = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.35), new THREE.MeshStandardMaterial({ map: toTexture(plaqueTexture(), { wrap: false }), roughness: 0.4 }));
-    plaque.rotation.y = -Math.PI / 2;
-    plaque.position.set(-0.111, 0.55, 0);
-    k.add(plaque);
-    // angled control panel
-    const head = new THREE.Group();
-    head.position.set(0, 1.04, 0);
-    head.rotation.z = 0.5;
-    k.add(head);
-    add(new THREE.BoxGeometry(0.38, 0.07, 0.64), steel, 0, 0, 0, head);
-    this.panelCanvas = makeCanvas(640, 384);
-    this.panelTex = toTexture(this.panelCanvas, { wrap: false });
-    const pg = new THREE.PlaneGeometry(0.6, 0.36);
-    pg.rotateX(-Math.PI / 2);
-    pg.rotateY(-Math.PI / 2);
-    const panel = new THREE.Mesh(pg, new THREE.MeshStandardMaterial({ map: this.panelTex, roughness: 0.25, metalness: 0.2, emissive: '#ffffff', emissiveMap: this.panelTex, emissiveIntensity: 0.35 }));
-    panel.position.y = 0.036;
-    head.add(panel);
-    this.buttons = [];
-    const ids = ['1944', '1958', 'kids', 'sound'];
-    const colors = { 1944: '#e0a040', 1958: '#2ec4b6', kids: '#ff5d8f', sound: '#8be08b' };
-    ids.forEach((id, i) => {
-      const z = -0.21 + i * 0.14;
-      add(new THREE.CylinderGeometry(0.048, 0.05, 0.014, 24), M('#1a1c1f', 0.4, 0.6), -0.03, 0.04, z, head);
-      const capMat = new THREE.MeshStandardMaterial({ color: colors[id], roughness: 0.3, emissive: colors[id], emissiveIntensity: 0.6 });
-      const cap = add(new THREE.CylinderGeometry(0.038, 0.038, 0.024, 24), capMat, -0.03, 0.055, z, head);
-      const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.08, 12), new THREE.MeshBasicMaterial({ visible: false }));
-      hit.position.set(-0.03, 0.06, z);
-      head.add(hit);
-      hit.userData.kioskButton = id;
-      cap.userData.kioskButton = id;
-      this.buttons.push({ id, cap, hit, mat: capMat, press: 0, hover: false });
-    });
-    this.addObstacle(obstacles, { t: 'circle', x: k.position.x, z: k.position.z, r: 0.38 });
-    this.drawPanel();
-  }
-
-  drawPanel() {
-    const c = this.panelCanvas, ctx = c.getContext('2d');
-    const W = c.width, H = c.height;
-    ctx.fillStyle = '#0f1216'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#1c232b'; ctx.fillRect(24, 20, W - 48, 110);
-    ctx.fillStyle = '#f1c453'; ctx.font = 'bold 28px Helvetica, Arial';
-    ctx.fillText('DET INTERAKTIVA ARKIVET', 44, 58);
-    ctx.fillStyle = '#e8e8e8'; ctx.font = '24px Helvetica, Arial';
-    const th = THEMES[this.theme];
-    ctx.fillText(`Visar nu: ${th.caption}`, 44, 96);
-    ctx.fillStyle = this.muted ? '#ff8080' : '#8be08b';
-    ctx.font = '20px Helvetica, Arial';
-    ctx.fillText(this.muted ? 'LJUD AV' : 'LJUD PÅ', W - 150, 96);
-    const labels = { 1944: '1944', 1958: '1958', kids: 'BARNENS', sound: this.muted ? 'LJUD PÅ' : 'LJUD AV' };
-    ['1944', '1958', 'kids', 'sound'].forEach((id, i) => {
-      const x = ((-0.21 + i * 0.14) + 0.3) / 0.6 * W;
-      const active = id === this.theme;
-      ctx.fillStyle = active ? '#f1c453' : '#b9c0c7';
-      ctx.font = `${active ? 'bold ' : ''}24px Helvetica, Arial`;
-      ctx.textAlign = 'center';
-      ctx.fillText(labels[id], x, 330);
-      if (active) { ctx.fillRect(x - 40, 342, 80, 4); }
-      ctx.textAlign = 'left';
-    });
-    ctx.fillStyle = '#7d858d'; ctx.font = '18px Helvetica, Arial';
-    ctx.fillText('Tryck för att byta epok', 44, 170);
-    this.panelTex.needsUpdate = true;
   }
 
   buildLights(obstacles) {
@@ -831,20 +741,60 @@ export class Installation {
     this.hw.add(this.festoon);
     const wire = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(wirePts), new THREE.LineBasicMaterial({ color: '#111' }));
     this.hw.add(wire);
+    this.buildMarquee();
     this.festoonLights = [new THREE.PointLight('#ffc98a', 0, 16, 1.5), new THREE.PointLight('#ffc98a', 0, 16, 1.5)];
     this.festoonLights[0].position.set(-5.5, 3.8, -4);
     this.festoonLights[1].position.set(-5.5, 3.8, 4);
     this.hw.add(...this.festoonLights);
   }
 
+  /** Theatre-style bulbs around the LED wall: on when someone is on stage, chasing when people chat or dance. */
+  buildMarquee() {
+    const pts = [];
+    const x = SCREEN.x - 0.05, z0 = SCREEN.z0 - 0.22, z1 = SCREEN.z1 + 0.22, y0 = SCREEN.y0 - 0.16, y1 = SCREEN.y1 + 0.16;
+    const step = 0.3;
+    for (let z = z0; z <= z1 + 1e-3; z += step) { pts.push([x, y1, z]); pts.push([x, y0, z]); }
+    for (let y = y0 + step; y < y1 - step / 2; y += step) { pts.push([x, y, z0]); pts.push([x, y, z1]); }
+    // order around the frame so a chase runs round it
+    const cy = (y0 + y1) / 2;
+    pts.sort((a, b) => Math.atan2(a[1] - cy, a[2]) - Math.atan2(b[1] - cy, b[2]));
+    this.marquee = new THREE.InstancedMesh(new THREE.SphereGeometry(0.045, 10, 8), new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }), pts.length);
+    const o = new THREE.Object3D();
+    pts.forEach(([px, py, pz], i) => {
+      o.position.set(px, py, pz);
+      o.updateMatrix();
+      this.marquee.setMatrixAt(i, o.matrix);
+      this.marquee.setColorAt(i, _c.set('#ffd08a'));
+    });
+    this.marquee.userData.dynamic = true;
+    this.hw.add(this.marquee);
+  }
+
+  updateMarquee(t, night) {
+    const m = this.marquee;
+    const on = this.colour;
+    const n = m.count;
+    for (let i = 0; i < n; i++) {
+      let b = 1;
+      if (this.dancing) _c.setHSL((i / n + t * 0.35) % 1, 0.85, 0.6);
+      else {
+        _c.set('#ffd08a');
+        if (this.talking) b = (i + Math.floor(t * 8)) % 4 === 0 ? 1.4 : 0.55; // warm chase
+      }
+      m.setColorAt(i, _c.multiplyScalar(0.25 + on * b * (1.2 + night * 1.6)));
+    }
+    m.instanceColor.needsUpdate = true;
+  }
+
   /** LED light strips in the paving that guide people from the entrances to the zone. */
   buildGuides() {
     const W = (lx, lz) => screenToWorld(lx, lz, 0.03);
     const paths = [
-      [new THREE.Vector3(0, 0.03, 18.5), new THREE.Vector3(0, 0.03, 14.5), W(-9, 0)], // from the big street (south)
-      [new THREE.Vector3(-27, 0.03, -1), new THREE.Vector3(-19, 0.03, 0.5), new THREE.Vector3(-13.5, 0.03, 5), W(-6.5, -9.2)], // west
-      [new THREE.Vector3(17.5, 0.03, -21), new THREE.Vector3(15, 0.03, -9), new THREE.Vector3(12.5, 0.03, 2.5), W(-5.5, 9.2)], // north path
-      [new THREE.Vector3(-3, 0.03, -18.5), new THREE.Vector3(-9.5, 0.03, -9), new THREE.Vector3(-10.8, 0.03, 0), W(-4.6, -9.6)], // from behind the screen
+      // every strip ends at the front edge of the wooden stage
+      [new THREE.Vector3(0, 0.03, 18.5), new THREE.Vector3(0, 0.03, 14.5), W(STAGE.x0 - 0.3, 0)], // from the big street (south)
+      [new THREE.Vector3(-27, 0.03, -1), new THREE.Vector3(-19, 0.03, 0.5), new THREE.Vector3(-13.5, 0.03, 5), W(STAGE.x0 - 0.3, -4.5)], // west
+      [new THREE.Vector3(17.5, 0.03, -21), new THREE.Vector3(15, 0.03, -9), new THREE.Vector3(12.5, 0.03, 2.5), W(STAGE.x0 - 0.3, 4.5)], // north path
+      [new THREE.Vector3(-3, 0.03, -18.5), new THREE.Vector3(-9.5, 0.03, -9), new THREE.Vector3(-10.8, 0.03, 0), W(STAGE.x0 - 1.5, -6.5), W(STAGE.x0 - 0.3, -5.6)], // from behind the screen
     ];
     this.guideMat = new THREE.ShaderMaterial({
       transparent: true,
@@ -923,19 +873,11 @@ export class Installation {
     this.vizPoints.renderOrder = 1000;
     this.vizPoints.frustumCulled = false;
     g.add(this.vizPoints);
-    // sensing volume outline on the ground + frustum rays
-    const outline = [];
-    const N = 24;
-    for (let i = 0; i <= N; i++) {
-      const d = 0.3 + (11.2 * i) / N;
-      const hw = Math.min(6.5 + d * 0.55, 11);
-      outline.push(new THREE.Vector3(SCREEN.x - d, 0.05, hw));
-    }
-    for (let i = N; i >= 0; i--) {
-      const d = 0.3 + (11.2 * i) / N;
-      const hw = Math.min(6.5 + d * 0.55, 11);
-      outline.push(new THREE.Vector3(SCREEN.x - d, 0.05, -hw));
-    }
+    // the tracked area (= the stage) outlined on the ground + rays from the sensors to its corners
+    const outline = [
+      new THREE.Vector3(STAGE.x1, 0.05, STAGE.z1), new THREE.Vector3(STAGE.x0, 0.05, STAGE.z1),
+      new THREE.Vector3(STAGE.x0, 0.05, STAGE.z0), new THREE.Vector3(STAGE.x1, 0.05, STAGE.z0),
+    ];
     outline.push(outline[0].clone());
     const local = new THREE.Group();
     local.position.set(LAYOUT.screen.cx, 0, LAYOUT.screen.cz);
@@ -946,7 +888,7 @@ export class Installation {
     local.add(ol);
     const rays = [];
     for (const s of this.sensorPositions) {
-      for (const p of [outline[N], outline[N + 1], outline[0]]) rays.push(s, p);
+      for (const p of [outline[1], outline[2]]) rays.push(s, p);
     }
     const rl = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(rays), new THREE.LineBasicMaterial({ color: '#39ff9f', transparent: true, opacity: 0.25, depthTest: false }));
     local.add(rl);
@@ -962,54 +904,12 @@ export class Installation {
   // =====================================================================
   // Interaction
   // =====================================================================
-  pressButton(id) {
-    const b = this.buttons.find((x) => x.id === id);
-    if (b) b.press = 1;
-    this.lastPress = this.time;
-    this.audio?.click();
-    if (id === 'sound') {
-      this.muted = !this.muted;
-      this.audio?.setInstallationMuted(this.muted);
-      this.onEvent(this.muted ? 'Pillar: installation sound off' : 'Pillar: installation sound on', 'kiosk');
-      this.drawPanel();
-      this.onShared?.({ muted: this.muted });
-      return;
-    }
-    if (id !== this.theme) {
-      this.setTheme(id);
-      this.onEvent(`Pillar: switched era to ${THEMES[id].caption}`, 'kiosk');
-      this.onShared?.({ theme: id });
-    }
-  }
-
   /** Shared state changed by someone else in the room. */
-  applyShared(state, by) {
-    if (state.theme && state.theme !== this.theme && state.theme !== this.pendingTheme) {
-      this.setTheme(state.theme);
-      this.themeTimer = 0;
-      if (by) this.onEvent(`${by} pressed the pillar → ${THEMES[state.theme].caption}`, 'kiosk');
-    }
+  applyShared(state) {
     if (typeof state.muted === 'boolean' && state.muted !== this.muted) {
       this.muted = state.muted;
       this.audio?.setInstallationMuted(this.muted);
-      this.drawPanel();
     }
-  }
-
-  setTheme(id, immediate = false) {
-    if (immediate) {
-      this.theme = id;
-      for (const [k, g] of Object.entries(this.themes)) g.visible = k === id;
-      this.archive.background = this.skies[id];
-      this.drawPanel();
-      this.overlayDirty = true;
-      return;
-    }
-    this.pendingTheme = id;
-  }
-
-  setHover(id) {
-    for (const b of this.buttons) b.hover = b.id === id;
   }
 
   showToast(text, dur = 3.5) {
@@ -1027,7 +927,8 @@ export class Installation {
 
     // --- tracking: who is inside the sensing zone ---
     for (const p of people) {
-      if (!inSensorZone(p.pos)) continue;
+      const seat = this.seatAt(p.pos);
+      if (!seat && !onStage(p.pos)) continue;
       seen.add(p.id);
       let tr = this.tracked.get(p.id);
       if (!tr) {
@@ -1035,6 +936,7 @@ export class Installation {
         this.tracked.set(p.id, tr);
       }
       tr.person = p;
+      tr.seat = seat;
       tr.lastSeen = t;
       tr.leaving = false;
     }
@@ -1042,7 +944,7 @@ export class Installation {
       if (!seen.has(id) && t - tr.lastSeen > 1.0 && !tr.leaving) {
         tr.leaving = true;
         tr.leaveT = t;
-        this.onEvent(`${tr.person.name} left the zone – ${tr.style.sv} fades away`, 'leave');
+        this.onEvent(`${tr.person.name} left the zone – ${tr.style.name} fades away`, 'leave');
       }
       if (tr.leaving && t - tr.leaveT > 0.6) {
         tr.rig.dispose();
@@ -1058,41 +960,24 @@ export class Installation {
     this.level = this.count === 0 ? 0 : this.count === 1 ? 1 : this.count === 2 ? 2 : this.count <= 4 ? 3 : 4;
     if (this.level !== prevLevel) {
       this.overlayDirty = true;
-      const msgs = [
-        'Torget somnar in igen…',
-        'En granne! Arkivet vaknar.',
-        'Två grannar – färgen börjar återvända.',
-        'En grupp! Ljusslingorna tänds.',
-        'FEST PÅ TORGET! Precis som på dansbanans tid.',
-      ];
-      if (this.level > prevLevel) this.showToast(msgs[this.level]);
+      if (prevLevel === 0) this.showToast('Someone stepped in – the archive wakes up in colour!');
+      else if (this.level === 0) this.showToast('The square falls asleep again…');
       this.onEvent(`Level ${this.level}: ${LEVELS[this.level].en} (${this.count} ${this.count === 1 ? 'person' : 'people'})`, 'level');
-      this.audio?.setLevel(this.level);
     }
     this.energy += (this.level - this.energy) * (1 - Math.exp(-dt * 1.2));
 
-    // --- proximity duos ---
-    this.updateDuos(active, t);
+    this.standing = active.filter((tr) => !tr.seat).length;
+    // black & white while the stage is empty, full colour as soon as someone steps in
+    this.colour += ((this.count > 0 ? 1 : 0) - this.colour) * (1 - Math.exp(-dt * 1.6));
+    this.spotLevel += ((this.dancing ? 1 : 0) - this.spotLevel) * (1 - Math.exp(-dt * 2));
+
+    // --- chat & dance groups ---
+    this.updateGroups(active, t);
+    this.updateBubbles(t);
 
     // --- avatars ---
     this.filterActive = false;
     for (const tr of this.tracked.values()) this.updateAvatar(tr, dt, t);
-
-    // --- theme switching / auto-rotation ---
-    this.themeTimer += dt;
-    if (this.autoRotate && !this.pendingTheme && this.themeTimer > 90 && t - this.lastPress > 45) {
-      this.pendingTheme = THEME_ORDER[(THEME_ORDER.indexOf(this.theme) + 1) % THEME_ORDER.length];
-      this.onEvent(`Auto-rotation → ${THEMES[this.pendingTheme].caption}`, 'kiosk');
-      this.onShared?.({ theme: this.pendingTheme });
-    }
-    if (this.pendingTheme) {
-      this.fade = Math.max(0, this.fade - dt * 3);
-      if (this.fade === 0) {
-        this.setTheme(this.pendingTheme, true);
-        this.pendingTheme = null;
-        this.themeTimer = 0;
-      }
-    } else this.fade = Math.min(1, this.fade + dt * 2.5);
 
     this.updateExtras(dt, t);
     this.updateFx(dt, t);
@@ -1107,8 +992,8 @@ export class Installation {
     // --- screen shader ---
     const e = this.energy;
     const u = this.screenMat.uniforms;
-    u.saturation.value = e < 1 ? e * 0.12 : e < 2 ? 0.12 + (e - 1) * 0.4 : e < 3 ? 0.52 + (e - 2) * 0.43 : 0.95 + (e - 3) * 0.2;
-    u.grain.value = 0.14 - Math.min(e, 4) * 0.03;
+    u.saturation.value = this.colour * (this.dancing ? 1.12 : 1);
+    u.grain.value = 0.03 + 0.15 * (1 - this.colour); // the empty screen looks like old, scratched film
     u.time.value = t;
     u.fade.value = this.fade;
     u.brightness.value = 1.05 + env.night * 0.35 + (e > 3 ? 0.1 : 0);
@@ -1134,7 +1019,7 @@ export class Installation {
     ctx.fillStyle = 'rgba(15,12,8,0.72)';
     ctx.beginPath(); ctx.roundRect(4, 4, 504, 104, 18); ctx.fill();
     ctx.fillStyle = '#f7e7c2'; ctx.font = 'bold 40px Georgia, serif'; ctx.textAlign = 'center';
-    ctx.fillText(style.sv, 256, 52);
+    ctx.fillText(style.name, 256, 52);
     ctx.fillStyle = '#d9c8a0'; ctx.font = 'italic 26px Georgia, serif';
     ctx.fillText(`${style.en} · ${style.era}`, 256, 90);
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: toTexture(c, { wrap: false }), transparent: true, depthWrite: false }));
@@ -1144,11 +1029,10 @@ export class Installation {
     filterIcon.visible = false;
     this.archive.add(filterIcon);
     this.emit('sparkle', stage.clone().add(_v.set(0, 1.0, 0)), 14, 1.0, 1.2);
-    this.onEvent(`${p.name} detected → becomes "${style.sv}" – ${style.en}`, 'track');
-    this.audio?.chime(0);
+    this.onEvent(`${p.name} detected → becomes "${style.name}" – ${style.en}`, 'track');
     return {
       id: p.id, person: p, style, rig, born: this.time, lastSeen: this.time, leaving: false,
-      stage, yaw: 0, tag, filterIcon, filterT: 0, filtered: false, filterLogged: false, duo: null,
+      stage, yaw: 0, tag, filterIcon, filterT: 0, filtered: false, filterLogged: false, group: null, seat: null,
     };
   }
 
@@ -1160,36 +1044,84 @@ export class Installation {
     return new THREE.Vector3(x, 0, z);
   }
 
-  updateDuos(active, t) {
-    const PROX = 1.5;
-    const present = new Set();
+  /** Is someone sitting on one of the stage benches? Works for local, remote and puppet people alike. */
+  seatAt(pos) {
+    for (const s of this.seats) if (Math.hypot(s.pos.x - pos.x, s.pos.z - pos.z) < 0.35) return s;
+    return null;
+  }
+
+  /**
+   * Interaction rules (feedback v2):
+   *   two people close together (or on the same bench) → their avatars chat, with fact bubbles
+   *   three or more close together                    → their avatars dance together
+   * Groups are connected components of "close to each other"; they last as long as people stay close.
+   */
+  updateGroups(active, t) {
+    const PROX = 1.6;
+    const parent = active.map((_, i) => i);
+    const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
     for (let i = 0; i < active.length; i++) for (let j = i + 1; j < active.length; j++) {
       const a = active[i], b = active[j];
-      const d = Math.hypot(a.person.pos.x - b.person.pos.x, a.person.pos.z - b.person.pos.z);
-      if (d > PROX) continue;
-      const key = [a.id, b.id].sort().join('|');
-      present.add(key);
-      if (this.duos.has(key) || a.duo || b.duo) continue;
-      if ((this.cooldowns.get(key) ?? -99) > t) continue;
-      const types = Object.keys(DUO_TYPES);
-      const n = (this.duoCounts.get(key) ?? 0) + 1;
-      this.duoCounts.set(key, n);
-      const type = types[hashStr(key + n) % types.length];
-      const [left, right] = this.stagePos(a.person).x <= this.stagePos(b.person).x ? [a, b] : [b, a];
-      const duo = { key, a: left, b: right, type, t0: t, dur: 5 };
-      this.duos.set(key, duo);
-      left.duo = duo; right.duo = duo;
-      this.onEvent(`Proximity: ${a.person.name} ↔ ${b.person.name} → ${DUO_TYPES[type].en} between ${a.style.sv} & ${b.style.sv}`, 'duo');
-      this.showToast(`${DUO_TYPES[type].sv}! ${left.style.sv} & ${right.style.sv}`);
-      this.audio?.chime(1);
+      const together = a.seat || b.seat
+        ? !!(a.seat && b.seat && a.seat.bench === b.seat.bench)
+        : Math.hypot(a.person.pos.x - b.person.pos.x, a.person.pos.z - b.person.pos.z) <= PROX;
+      if (together) parent[find(i)] = find(j);
     }
-    for (const [key, duo] of this.duos) {
-      const done = t - duo.t0 > duo.dur || !this.tracked.has(duo.a.id) || !this.tracked.has(duo.b.id);
-      if (done) {
-        duo.a.duo = null; duo.b.duo = null;
-        this.duos.delete(key);
-        this.cooldowns.set(key, t + 12);
+    const comps = new Map();
+    active.forEach((tr, i) => {
+      const r = find(i);
+      if (!comps.has(r)) comps.set(r, []);
+      comps.get(r).push(tr);
+    });
+    const next = new Map();
+    for (const members of comps.values()) {
+      if (members.length < 2) continue;
+      members.sort((a, b) => (a.id < b.id ? -1 : 1)); // same order on every client
+      const key = members.map((m) => m.id).join('|');
+      const type = members.length >= 3 ? 'dance' : 'talk';
+      const old = this.groups.get(key);
+      const g = old && old.type === type ? old : { key, type, t0: t, turn: -1, nextTurn: t + 0.4, factIdx: hashStr(key) % FACTS.length };
+      g.members = members;
+      next.set(key, g);
+      if (g !== old) {
+        const names = members.map((m) => m.style.name).join(', ');
+        if (type === 'talk') {
+          this.showToast('Neighbours chatting – listen to their stories!');
+          this.onEvent(`Chat: ${names}`, 'duo');
+        } else {
+          this.showToast('Three or more together – time to dance!');
+          this.onEvent(`Dance: ${names}`, 'duo');
+        }
       }
+    }
+    for (const [key, g] of this.groups) if (!next.has(key) && g.bubble) { g.bubble.material.map.dispose(); g.bubble.removeFromParent(); }
+    for (const tr of this.tracked.values()) tr.group = null;
+    for (const g of next.values()) for (const m of g.members) m.group = g;
+    this.groups = next;
+    const talking = [...next.values()].some((g) => g.type === 'talk');
+    if (talking !== this.talking) this.overlayDirty = true;
+    this.talking = talking;
+    this.dancing = [...next.values()].some((g) => g.type === 'dance');
+  }
+
+  /** Fact bubbles over chatting avatars: the two take turns, a new fact every few seconds. */
+  updateBubbles(t) {
+    for (const g of this.groups.values()) {
+      if (g.type !== 'talk') continue;
+      if (t >= g.nextTurn) {
+        g.turn++;
+        g.factIdx = (g.factIdx + (g.turn > 0 ? 1 : 0)) % FACTS.length;
+        g.nextTurn = t + 6;
+        if (g.bubble) { g.bubble.material.map.dispose(); g.bubble.removeFromParent(); }
+        g.bubble = factBubble(FACTS[g.factIdx]);
+        this.archive.add(g.bubble);
+      }
+      const speaker = g.members[g.turn % g.members.length];
+      if (!speaker) continue;
+      const sc = speaker.rig.style.scale ?? 1;
+      g.bubble.position.copy(speaker.stage).add(_v.set(-Math.sign(speaker.stage.x) * 0.5, 1.95 * sc, 0.3));
+      const fadeIn = Math.min(1, (t - (g.nextTurn - 6)) / 0.3);
+      g.bubble.material.opacity = fadeIn;
     }
   }
 
@@ -1203,24 +1135,28 @@ export class Installation {
 
     let target = this.stagePos(p);
     let yawTarget = Math.PI / 2 - (p.heading - LAYOUT.screen.rot);
-    const duo = tr.duo;
-    let duoT = 0;
-    if (duo) {
-      duoT = t - duo.t0;
-      const mid = this.stagePos(duo.a.person).add(this.stagePos(duo.b.person)).multiplyScalar(0.5);
-      const role = duo.a === tr ? 0 : 1;
-      const side = role === 0 ? -1 : 1;
-      if (duo.type === 'swing') {
-        const ang = duoT * 2.2 + (role ? Math.PI : 0);
-        target = mid.clone().add(_v.set(Math.cos(ang) * 0.45 * -1, 0, Math.sin(ang) * 0.45));
-        yawTarget = Math.atan2(mid.x - target.x, mid.z - target.z) + 0.3;
+    const g = tr.group;
+    const idx = g ? g.members.indexOf(tr) : 0;
+    if (g) {
+      const mid = new THREE.Vector3();
+      for (const m of g.members) mid.add(this.stagePos(m.person));
+      mid.multiplyScalar(1 / g.members.length);
+      if (g.type === 'talk') {
+        // stand side by side, turned towards each other
+        target = mid.add(_v.set(idx === 0 ? -0.5 : 0.5, 0, 0));
+        yawTarget = (idx === 0 ? 1 : -1) * Math.PI / 2 * 0.7;
       } else {
-        target = mid.clone().add(_v.set(side * 0.42, 0, 0));
-        yawTarget = role === 0 ? Math.PI / 2 * 0.85 : -Math.PI / 2 * 0.85;
+        // dance in a slowly turning ring, mostly facing the audience
+        const n = g.members.length, r = 0.45 + 0.17 * n;
+        const ang = (t - g.t0) * 0.7 + (idx / n) * Math.PI * 2;
+        target = mid.add(_v.set(Math.sin(ang) * r, 0, Math.cos(ang) * r * 0.55));
+        yawTarget = Math.sin(ang) * 0.5;
+        if (Math.floor((t + idx * 0.13) * 2) !== Math.floor((t + idx * 0.13 - dt) * 2)) {
+          this.emit(idx % 2 ? 'heart' : 'sparkle', tr.stage.clone().add(_v.set(0, 1.2 + this.rand(), 0)), 2, 0.9, 0.9);
+        }
       }
-      if (Math.floor(duoT * 3) !== Math.floor((duoT - dt) * 3)) {
-        this.emit(duo.type === 'handshake' ? 'sparkle' : 'heart', mid.clone().add(_v.set(0, 2.0, 0)), 2, 0.5, 0.8);
-      }
+    } else if (tr.seat) {
+      yawTarget = 0; // sitting on a bench → the avatar stands, facing out of the screen
     }
     tr.stage.lerp(target, 1 - Math.exp(-dt * 6));
     rig.root.position.copy(tr.stage);
@@ -1247,12 +1183,21 @@ export class Installation {
     if (tr.filtered) this.filterActive = true;
 
     // --- pose ---
-    if (duo) {
+    if (g && g.type === 'talk') {
       rig.resetTargets();
-      animIdle(rig, t, 1);
-      animDuo(rig, duo.type, duo.a === tr ? 0 : 1, duoT);
+      animIdle(rig, t, idx);
+      animTalk(rig, t, g.members[g.turn % g.members.length] === tr, idx * 1.7);
+    } else if (g) {
+      rig.resetTargets();
+      animIdle(rig, t, idx);
+      animGesture(rig, idx % 3 === 2 ? 'cheer' : 'dance', 0.5 + ((t - g.t0 + idx * 0.7) % 2.856)); // 2.856 s = two whole dance cycles, so the loop is seamless
     } else {
       rig.copyPoseFrom(p.rig, true);
+      if (tr.seat) {
+        // sitting on a bench: the avatar stands, but still mirrors arms, head and upper body
+        for (const j of ['thighL', 'shinL', 'footL', 'thighR', 'shinR', 'footR']) rig.target[j].identity();
+        rig.offsetTarget.set(0, 0, 0);
+      }
       if (tr.filtered) {
         // mirrored: the person's right hand is the avatar's left
         const side = rightHand ? 'L' : 'R';
@@ -1266,14 +1211,14 @@ export class Installation {
     // name tag & filter icon
     const sc = rig.style.scale ?? 1;
     tr.tag.position.copy(tr.stage).add(_v.set(0, 2.25 * sc, 0.2));
-    tr.tag.material.opacity = clamp(1 - (age - 5) / 1.5, 0, 1) * s;
+    tr.tag.material.opacity = (g?.type === 'talk' ? 0 : clamp(1 - (age - 5) / 1.5, 0, 1)) * s;
     tr.tag.visible = tr.tag.material.opacity > 0.01;
     tr.filterIcon.visible = tr.filtered;
     tr.filterIcon.position.copy(tr.stage).add(_v.set(0.45, 1.75 * sc, 0.3));
   }
 
   updateExtras(dt, t) {
-    const want = [2, 2, 4, 7, 12][this.level];
+    const want = this.count === 0 ? 5 : [2, 2, 4, 7, 12][this.level];
     const fest = this.energy > 3.5;
     this.extras.forEach((ex, i) => {
       const shouldBeActive = i < want;
@@ -1325,7 +1270,7 @@ export class Installation {
   updateFx(dt, t) {
     const e = this.energy;
     // flag
-    if (this.flag && this.themes[1944].visible) {
+    if (this.flag) {
       const pos = this.flag.geometry.attributes.position;
       for (let i = 0; i < pos.count; i++) {
         const x = this.flagBase[i * 3];
@@ -1345,14 +1290,14 @@ export class Installation {
     this.stageBulbs.visible = l > 0.01;
     this.stageBulbs.material.color.setScalar(0.4 + l * 2.2 * (0.85 + 0.15 * Math.sin(t * 6)));
     // stage spot cones
-    const sc = smooth(2.6, 3.4, e);
-    this.stageCones.forEach((c, i) => {
+    const sc = this.spotLevel;
+    this.stageCones.forEach((c) => {
       c.visible = sc > 0.01;
       c.material.uniforms.intensity.value = sc * 0.35;
-      c.material.uniforms.color.value.set(e > 3.5 ? ['#ff6b9a', '#ffd166', '#6ecbff'][i] : '#ffe9c4');
+      c.material.uniforms.color.value.set('#ffe2b0'); // warm, vintage
     });
-    // confetti
-    const cf = smooth(3.4, 3.9, e);
+    // confetti while people dance
+    const cf = this.spotLevel;
     this.confetti.visible = cf > 0.01;
     this.confetti.material.opacity = cf;
     if (this.confetti.visible) {
@@ -1380,7 +1325,8 @@ export class Installation {
     // gentle camera push-in at higher energy
     this.archiveCam.position.z = 9.5 - e * 0.25;
     this.archiveCam.position.x = Math.sin(t * 0.07) * (this.count === 0 ? 1.2 : 0.2);
-    this.archiveCam.lookAt(this.archiveCam.position.x * 0.5, 1.3, -1);
+    this.updateCars(dt);
+    this.archiveCam.lookAt(this.archiveCam.position.x * 0.5, 2.0, -1);
   }
 
   updateHardware(dt, t, env) {
@@ -1395,12 +1341,11 @@ export class Installation {
       led.material.color.set(on ? (this.count > 0 ? '#ff2a2a' : '#661010') : '#200505');
     });
     // spotlights
-    const sp = smooth(2.5, 3.2, e);
+    // vintage spotlights on the stage while people dance
+    const sp = this.spotLevel;
     const fest = e > 3.5;
-    const FEST = ['#ff6b9a', '#ffd166', '#6ecbff', '#b69cff'];
-    this.spots.forEach((s, i) => {
-      // static fixtures: fixed aim, only brightness (and a fixed festival tint) follows the level
-      const col = fest ? _c.set(FEST[i]) : _c.set('#fff1dc');
+    this.spots.forEach((s) => {
+      const col = _c.set('#ffd9a0');
       s.light.color.copy(col);
       s.light.intensity = sp * (60 + night * 140);
       s.beam.visible = sp > 0.01;
@@ -1428,13 +1373,7 @@ export class Installation {
       this.festoonWasFest = false;
     }
     this.festoonLights.forEach((l) => { l.intensity = f * (4 + night * 18); });
-    // kiosk buttons
-    for (const b of this.buttons) {
-      b.press = Math.max(0, b.press - dt * 4);
-      b.cap.position.y = 0.055 - b.press * 0.01;
-      const active = b.id === this.theme || (b.id === 'sound' && !this.muted);
-      b.mat.emissiveIntensity = 0.35 + (active ? 0.9 : 0) + (b.hover ? 1.2 : 0) + b.press * 3 + night * 0.5;
-    }
+    this.updateMarquee(t, night);
   }
 
   updateSensorViz() {
@@ -1469,9 +1408,11 @@ export class Installation {
     }
     // proximity links
     const pink = new THREE.Color('#ff4f7a');
-    for (const duo of this.duos.values()) {
-      pushLine(_v.copy(duo.a.person.pos).setY(0.08), _v2.copy(duo.b.person.pos).setY(0.08), pink);
-      pushLine(_v.copy(duo.a.person.pos).setY(1.2), _v2.copy(duo.b.person.pos).setY(1.2), pink);
+    for (const g of this.groups.values()) {
+      for (let i = 1; i < g.members.length; i++) {
+        pushLine(_v.copy(g.members[i - 1].person.pos).setY(0.08), _v2.copy(g.members[i].person.pos).setY(0.08), pink);
+        pushLine(_v.copy(g.members[i - 1].person.pos).setY(1.2), _v2.copy(g.members[i].person.pos).setY(1.2), pink);
+      }
     }
     this.vizLines.geometry.setDrawRange(0, li * 2);
     this.vizLines.geometry.attributes.position.needsUpdate = true;
@@ -1491,6 +1432,13 @@ export class Installation {
     const W = c.width, H = c.height;
     ctx.clearRect(0, 0, W, H);
     const th = THEMES[this.theme];
+    // the header steps aside while avatars chat, so their fact bubbles are always readable
+    if (!this.talking) this.drawOverlayHeader(ctx, W, th);
+    this.drawOverlayBody(ctx, W, H);
+    this.overlayTex.needsUpdate = true;
+  }
+
+  drawOverlayHeader(ctx, W, th) {
     // caption (archival label)
     ctx.fillStyle = 'rgba(12,10,8,0.55)';
     ctx.fillRect(40, 30, 560, 92);
@@ -1512,10 +1460,13 @@ export class Installation {
     }
     ctx.fillStyle = '#f4e6c6';
     ctx.font = 'bold 28px Helvetica, Arial';
-    ctx.fillText(LEVELS[this.level].sv.toUpperCase(), x0 + 180, 76);
+    ctx.fillText(LEVELS[this.level].short.toUpperCase(), x0 + 180, 76);
     ctx.font = '22px Helvetica, Arial';
     ctx.fillStyle = '#d8c8a4';
-    ctx.fillText(this.count === 0 ? 'ingen här just nu' : `${this.count} ${this.count === 1 ? 'granne' : 'grannar'} på torget`, x0, 108);
+    ctx.fillText(this.count === 0 ? 'nobody here right now' : `${this.count} ${this.count === 1 ? 'neighbour' : 'neighbours'} on the square`, x0, 108);
+  }
+
+  drawOverlayBody(ctx, W, H) {
     // attract text
     if (this.count === 0) {
       ctx.textAlign = 'center';
@@ -1523,10 +1474,10 @@ export class Installation {
       ctx.shadowBlur = 18;
       ctx.fillStyle = '#fff6e0';
       ctx.font = 'bold 64px Georgia, serif';
-      ctx.fillText('Kliv fram och bli en del av torgets historia', W / 2, H / 2 + 10);
+      ctx.fillText('Step closer and become part of the square’s history', W / 2, H / 2 + 10);
       ctx.font = 'italic 34px Georgia, serif';
       ctx.fillStyle = '#f1dcae';
-      ctx.fillText('Step closer and become part of the square’s history', W / 2, H / 2 + 62);
+      ctx.fillText('Guldhedstorget as it looked in the 1940s', W / 2, H / 2 + 62);
       ctx.shadowBlur = 0;
       ctx.textAlign = 'left';
     }
@@ -1561,7 +1512,7 @@ export class Installation {
       muted: this.muted,
       playerAvatar: player ? player.style : null,
       filterActive: this.filterActive,
-      duos: [...this.duos.values()].map((d) => ({ a: d.a.person.name, b: d.b.person.name, type: DUO_TYPES[d.type].sv })),
+      groups: [...this.groups.values()].map((g) => ({ type: g.type, members: g.members.map((m) => m.person.name) })),
     };
   }
 }
@@ -1599,6 +1550,79 @@ function beamMaterial() {
         #include <colorspace_fragment>
       }`,
   });
+}
+
+/** A historical-fact speech bubble for the LED wall. */
+function factBubble(text) {
+  const W = 900, pad = 34, lineH = 46;
+  const ctx0 = makeCanvas(8, 8).getContext('2d');
+  ctx0.font = '600 38px Georgia, serif';
+  const words = text.split(' '), lines = [];
+  let line = '';
+  for (const w of words) {
+    const test = line ? `${line} ${w}` : w;
+    if (ctx0.measureText(test).width > W - pad * 2 && line) { lines.push(line); line = w; } else line = test;
+  }
+  if (line) lines.push(line);
+  const H = pad * 2 + lines.length * lineH + 30;
+  const c = makeCanvas(W, H), ctx = c.getContext('2d');
+  const bw = Math.min(W - 4, Math.max(...lines.map((l) => ctx0.measureText(l).width)) + pad * 2);
+  const x0 = (W - bw) / 2;
+  ctx.fillStyle = '#fffaf0';
+  ctx.strokeStyle = '#3a2a1a';
+  ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.roundRect(x0, 3, bw, H - 34, 28); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W / 2 - 22, H - 33); ctx.lineTo(W / 2 - 4, H - 4); ctx.lineTo(W / 2 + 18, H - 33); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(W / 2 - 22, H - 31); ctx.lineTo(W / 2 - 4, H - 4); ctx.lineTo(W / 2 + 18, H - 31); ctx.stroke();
+  ctx.fillStyle = '#2a1d10';
+  ctx.font = '600 38px Georgia, serif';
+  ctx.textAlign = 'center';
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, pad + 34 + i * lineH));
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: toTexture(c, { wrap: false }), transparent: true, depthWrite: false, depthTest: false }));
+  const worldW = 2.9;
+  sp.scale.set(worldW, worldW * (H / W), 1);
+  sp.center.set(0.5, 0);
+  sp.renderOrder = 10;
+  return sp;
+}
+
+/** A rounded 1940s saloon (Volvo PV444-ish) or a delivery van (PV445-ish). */
+function vintageCar(color, van = false) {
+  const g = new THREE.Group();
+  const paint = M(color, 0.35, 0.3), chrome = M('#d8d8d8', 0.2, 0.9), dark = M('#141618', 0.3, 0.4), tyre = M('#111', 0.7);
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.62, 2.7, 8, 16), paint);
+  body.rotation.z = Math.PI / 2; body.scale.set(1, 1, 1.32); body.position.y = 0.72;
+  g.add(body);
+  if (van) {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.05, 1.55), paint);
+    box.position.set(-0.55, 1.25, 0); g.add(box);
+    const win = new THREE.Mesh(new THREE.SphereGeometry(0.75, 16, 10, 0, Math.PI), dark);
+    win.scale.set(0.9, 0.6, 1); win.rotation.y = -Math.PI / 2; win.position.set(0.55, 1.2, 0); g.add(win);
+  } else {
+    const cab = new THREE.Mesh(new THREE.SphereGeometry(0.9, 20, 12), paint);
+    cab.scale.set(1.3, 0.7, 0.85); cab.position.set(-0.25, 1.15, 0); g.add(cab);
+    const win = new THREE.Mesh(new THREE.SphereGeometry(0.91, 20, 12), dark);
+    win.scale.set(1.0, 0.55, 0.8); win.position.set(-0.25, 1.22, 0); g.add(win);
+  }
+  g.userData.wheels = [];
+  for (const wx of [-1.2, 1.2]) for (const wz of [-0.72, 0.72]) {
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.22, 16), tyre);
+    w.rotation.x = Math.PI / 2; w.position.set(wx, 0.33, wz); g.add(w);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.24, 12), chrome);
+    hub.rotation.x = Math.PI / 2; hub.position.set(wx, 0.33, wz); g.add(hub);
+    g.userData.wheels.push(w);
+  }
+  for (const bx of [-2.0, 2.0]) {
+    const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 1.65), chrome);
+    bumper.position.set(bx, 0.5, 0); g.add(bumper);
+  }
+  const lamp = new THREE.MeshBasicMaterial({ color: '#fff3d0' });
+  for (const lz of [-0.5, 0.5]) {
+    const l = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), lamp);
+    l.position.set(1.95, 0.85, lz); g.add(l);
+  }
+  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  return g;
 }
 
 function makeFilterIcon() {

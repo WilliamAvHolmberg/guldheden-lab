@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Rig, modernStyle, animIdle, animWalk, animGesture, animSit, GESTURES } from './character.js';
-import { resolveCollisions, LAYOUT, headingToScreen, inSensorZone, screenToWorld } from './world.js';
+import { resolveCollisions, LAYOUT, headingToScreen, onStage, screenToWorld } from './world.js';
 import { rng } from './textures.js';
 
 const NAMES = [
@@ -32,9 +32,9 @@ const ENTRANCES = [
 ];
 
 const LINES = {
-  adult: ['Titta, det är ju gamla torget!', 'Kom, vi går närmare!', 'Vad är jag för figur?', 'Haha, den gör som jag!', 'Fler behövs för färgen!', 'Snyggt ljus i kväll'],
-  elderly: ['Här låg dansbanan förr, vet du.', 'Så där såg det ut 1944!', 'Jag minns bageriet på hörnet.', 'Min mor handlade just där.', 'Vad fint att se torget levande igen', 'Kom och sätt dig en stund!'],
-  child: ['Kolla, jag flyger!', 'Mormor, du är en spårvagnsförare!', 'Min teckning är på skärmen!', 'Igen, igen!', 'Vi dansar!'],
+  adult: ['Look, it’s the old square!', 'Come on, let’s get closer!', 'Which figure am I?', 'Haha, it copies me!', 'We need more people for colour!', 'Lovely lights tonight'],
+  elderly: ['The dance hall used to be right here.', 'That’s exactly how it looked in 1944!', 'I remember the bakery on the corner.', 'My mother did her shopping just there.', 'How lovely to see the square alive again', 'Come and sit down for a while!'],
+  child: ['Look, I’m flying!', 'Grandma, you’re a tram conductor!', 'My drawing is on the screen!', 'Again, again!', 'We’re dancing!'],
 };
 
 function insideObstacle(p, obstacles, r = 0.5) {
@@ -343,7 +343,7 @@ export class Crowd {
         // occasionally walk up to someone else at the screen (triggers the duo animations)
         if (!a.approached && Math.random() < dt * 0.06) {
           a.approached = true;
-          const others = people.filter((o) => o !== a && inSensorZone(o.pos));
+          const others = people.filter((o) => o !== a && onStage(o.pos));
           if (others.length) {
             const o = others[Math.floor(Math.random() * others.length)];
             const side = Math.random() < 0.5 ? -1 : 1;

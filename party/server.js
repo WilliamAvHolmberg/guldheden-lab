@@ -40,7 +40,7 @@ export class Guldheden extends Server {
     try { msg = JSON.parse(raw); } catch { return; }
     switch (msg.t) {
       case 'hello': {
-        const name = String(msg.name ?? 'Granne').slice(0, 24);
+        const name = String(msg.name ?? 'Neighbour').slice(0, 24);
         this.meta.set(sender.id, { name, style: msg.style });
         this.broadcastJSON({ t: 'join', id: sender.id, name, style: msg.style }, [sender.id]);
         this.electHost();
@@ -65,7 +65,7 @@ export class Guldheden extends Server {
         const now = Date.now();
         if (!text || now - (this.lastChat.get(sender.id) ?? 0) < 400) break;
         this.lastChat.set(sender.id, now);
-        this.broadcastJSON({ t: 'chat', id: sender.id, name: this.meta.get(sender.id)?.name ?? 'Granne', text }, [sender.id]);
+        this.broadcastJSON({ t: 'chat', id: sender.id, name: this.meta.get(sender.id)?.name ?? 'Neighbour', text }, [sender.id]);
         break;
       }
       case 'cmd': // visitor spawning is done by the host

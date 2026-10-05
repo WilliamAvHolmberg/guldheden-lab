@@ -12,18 +12,17 @@
   <div id="start">
     <div class="card">
       <div class="eyebrow">Energy group · Design-in-Action · Chalmers</div>
-      <h1>Det interaktiva arkivet</h1>
-      <p class="lead">A walkable simulation of the installation on <b>Guldhedstorget</b>, Gothenburg. An LED wall in the empty shopfronts turns everyone who steps up into a historical figure from the square that copies their movements. The more neighbours there are, the more colour, light and music.</p>
+      <h1>The Interactive Archive</h1>
+      <p class="lead">A walkable simulation of the installation on <b>Guldhedstorget</b>, Gothenburg. A freestanding LED wall out on the square, facing the big street, turns everyone who steps onto the stage into a historical figure from the square that copies their movements. The more neighbours there are, the more colour, light and music.</p>
       <div class="grid">
         <div><kbd>W A S D</kbd> walk · <kbd>Shift</kbd> run · drag to look · scroll to zoom</div>
         <div><kbd>1</kbd>–<kbd>8</kbd> gestures · <kbd>Space</kbd> jump · <kbd>F</kbd> face the screen</div>
-        <div>Click the <b>buttons on the pillar</b> next to the screen to change the era</div>
         <div><kbd>C</kbd> webcam pose (MediaPipe) · <kbd>K</kbd> sensor view · <kbd>V</kbd> screen feed</div>
-        <div><kbd>Enter</kbd> chatta – texten syns ovanför din figur · <kbd>E</kbd> sätt dig på en bänk</div>
-        <div>Följ de gula <b>ljusslingorna i marken</b> fram till skärmen</div>
+        <div><kbd>E</kbd> sit down on a bench</div>
+        <div>Follow the yellow <b>light strips in the ground</b> to the screen</div>
       </div>
       <div class="join">
-        <input id="name" maxlength="24" placeholder="Ditt namn (visas för andra)" autocomplete="off" />
+        <input id="name" maxlength="24" placeholder="Your name (shown to others)" autocomplete="off" />
         <button id="enter">Enter the square</button>
       </div>
       <div class="room" id="roomInfo"></div>
@@ -32,40 +31,13 @@
   </div>
 
   <div id="hud" hidden>
-    <div id="title">
-      <div class="t1">Guldhedstorget</div>
-      <div class="t2">Det interaktiva arkivet · simulation</div>
-      <div id="online" title="Klicka för att kopiera länken till rummet"></div>
-    </div>
-
-    <div id="panel">
-      <div class="ph">Sensor system <span id="fps"></span></div>
-      <div class="row"><span>Tracked people</span><b id="count">0</b></div>
-      <div class="meter" id="meter">
-        <div data-l="1"></div><div data-l="2"></div><div data-l="3"></div><div data-l="4"></div>
-      </div>
-      <div class="row"><span>Level</span><b id="levelName">Attract mode</b></div>
-      <div class="row"><span>Era on screen</span><b id="themeName">1944</b></div>
-      <div class="row"><span>Your avatar</span><b id="avatarName">— step into the zone</b></div>
-      <div class="row" id="filterRow"><span>Content filter</span><b id="filterState">idle</b></div>
-      <div class="ph small">Event log</div>
-      <ul id="log"></ul>
-    </div>
 
     <div id="tools">
-      <button data-act="cam" id="camBtn"><i>C</i> Webcam pose</button>
       <button data-act="add"><i>N</i> + Visitor</button>
-      <button data-act="group"><i>G</i> + Group of 4</button>
       <button data-act="clear">Clear square</button>
       <button data-act="time" id="timeBtn"><i>T</i> Day</button>
-      <button data-act="sensor" id="sensorBtn"><i>K</i> Sensor view</button>
-      <button data-act="screen" id="screenBtn"><i>V</i> Screen feed: small</button>
+      <button data-act="sit" id="sitBtn"><i>E</i> Sit down</button>
       <button data-act="sound" id="soundBtn"><i>M</i> Sound on</button>
-    </div>
-
-    <div id="chat">
-      <ul id="chatLog"></ul>
-      <input id="chatInput" maxlength="140" placeholder="Tryck Enter för att chatta…" autocomplete="off" />
     </div>
 
     <div id="gestures"></div>

@@ -118,7 +118,6 @@ export class Multiplayer {
       },
       onHost: (isHost) => {
         this.crowd.setPuppet(!isHost);
-        this.installation.autoRotate = isHost;
         if (isHost && !this.initialSpawned && this.crowd.agents.length === 0) this.spawnInitial();
         this.onStatus?.();
       },
@@ -130,7 +129,7 @@ export class Multiplayer {
           let g = this.guests.get(m.id);
           if (!g) {
             const st = playerStyle(`${m.id}-guest`);
-            g = new RemotePerson(this.scene, `${m.id}-guest`, `${r.name}s gäst`, st);
+            g = new RemotePerson(this.scene, `${m.id}-guest`, `${r.name}’s guest`, st);
             this.guests.set(m.id, g);
           }
           g.ingest(m.gs);

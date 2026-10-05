@@ -3,9 +3,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildWorld, LAYOUT, screenOffset } from './world.js';
+import { buildWorld, LAYOUT, screenOffset, onStage } from './world.js';
 import { Speech } from './speech.js';
-import { Installation, LEVELS, THEMES } from './installation.js';
+import { Installation } from './installation.js';
 import { Player, GESTURE_KEYS } from './player.js';
 import { Crowd } from './crowd.js';
 import { PoseDriver } from './pose.js';
@@ -18,7 +18,9 @@ import { partyHost, roomName } from './net.js';
 // ---------------------------------------------------------------- renderer
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+// Resolution: start at most 1.5× and let the adaptive scaler below lower it on slow machines.
+const MAX_PIXEL_RATIO = Math.min(window.devicePixelRatio, 1.5);
+renderer.setPixelRatio(MAX_PIXEL_RATIO);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -36,12 +38,9 @@ composer.addPass(new OutputPass());
 
 // ---------------------------------------------------------------- systems
 const audio = new AudioEngine();
-const logEl = document.getElementById('log');
-const events = [];
-function logEvent(text, kind = '') {
-  events.unshift({ text, kind });
-  if (events.length > 8) events.pop();
-  logEl.innerHTML = events.map((e) => `<li class="${e.kind}"><span class="k"></span>${e.text}</li>`).join('');
+// The on-screen event log was removed (feedback v2); events still go to the console for debugging.
+function logEvent(text) {
+  console.debug('[torget]', text);
 }
 
 const world = buildWorld(scene, renderer);
@@ -54,36 +53,12 @@ const mp = new Multiplayer({
   scene, player: null, crowd, installation, log: logEvent, onStatus: () => updateOnline(),
   onChat: ({ person, name, text }) => {
     if (person) speech.say(person, text, { name });
-    addChat(name, text);
   },
 });
-const raycaster = new THREE.Raycaster();
-const ndc = new THREE.Vector2();
-
-function pickKiosk(x, y) {
-  ndc.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
-  raycaster.setFromCamera(ndc, camera);
-  const hits = raycaster.intersectObjects(installation.buttons.map((b) => b.hit), false);
-  return hits.length ? hits[0].object.userData.kioskButton : null;
-}
-const nearKiosk = () => player.pos.distanceTo(installation.kioskPos) < 3.2;
-
 const player = new Player(scene, camera, canvas, {
   style: playerStyle(mp.id),
   obstacles: world.obstacles,
   buildings: world.buildings,
-  onClick: (x, y) => {
-    const id = pickKiosk(x, y);
-    if (!id) return;
-    if (!nearKiosk()) { showHint('Walk up to the pillar to press its buttons'); return; }
-    installation.pressButton(id);
-    player.play('wave');
-  },
-  onHover: (x, y) => {
-    const id = pickKiosk(x, y);
-    installation.setHover(id && nearKiosk() ? id : null);
-    canvas.style.cursor = id ? (nearKiosk() ? 'pointer' : 'not-allowed') : 'default';
-  },
 });
 
 player.id = mp.id;
@@ -99,7 +74,7 @@ let guestGone = 0;
 const guestRand = rng(2026);
 
 async function toggleCam() {
-  const btn = document.getElementById('camBtn');
+  const btn = document.getElementById('camBtn') ?? document.createElement('button');
   if (pose.running || pose.status === 'loading') {
     pose.stop();
     camPanel.hidden = true;
@@ -187,7 +162,7 @@ function showHint(text, dur = 2.5) {
 const TIMES = ['day', 'dusk', 'night'];
 const TIME_LABEL = { day: 'Day', dusk: 'Dusk', night: 'Night' };
 let timeIdx = 0;
-let pipMode = 'small';
+let pipMode = 'off';
 const PIP_LABEL = { small: 'small', large: 'large', off: 'off' };
 let soundOn = true;
 
@@ -199,7 +174,6 @@ const actions = {
   time: () => {
     timeIdx = (timeIdx + 1) % TIMES.length;
     world.setTimeOfDay(TIMES[timeIdx]);
-    audio.setNight(world.env.night);
     $('timeBtn').innerHTML = `<i>T</i> ${TIME_LABEL[TIMES[timeIdx]]}`;
   },
   sensor: () => {
@@ -210,6 +184,7 @@ const actions = {
     pipMode = pipMode === 'small' ? 'large' : pipMode === 'large' ? 'off' : 'small';
     $('screenBtn').innerHTML = `<i>V</i> Screen feed: ${PIP_LABEL[pipMode]}`;
   },
+  sit: toggleSit,
   sound: () => {
     soundOn = !soundOn;
     audio.setMasterMuted(!soundOn);
@@ -222,18 +197,16 @@ window.addEventListener('keydown', (e) => {
   if (!started || ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
   const map = { KeyC: 'cam', KeyN: 'add', KeyG: 'group', KeyT: 'time', KeyK: 'sensor', KeyV: 'screen', KeyM: 'sound' };
   if (map[e.code]) actions[map[e.code]]();
-  if (e.code === 'KeyE') {
-    if (player.seat) { player.standUp(); return; }
-    const seat = nearestSeat();
-    if (seat) {
-      if (!player.sitAt(seat)) showHint('Den platsen är upptagen');
-    } else if (nearKiosk()) {
-      const order = ['1944', '1958', 'kids'];
-      installation.pressButton(order[(order.indexOf(installation.theme) + 1) % order.length]);
-    }
-  }
-  if (e.code === 'Enter') { e.preventDefault(); chatInput.focus(); }
+  if (e.code === 'KeyE') toggleSit();
 });
+
+/** Sit down on the nearest bench, or get up again. */
+function toggleSit() {
+  if (player.seat) { player.standUp(); return; }
+  const seat = nearestSeat();
+  if (!seat) showHint('Walk up to a bench to sit down');
+  else if (!player.sitAt(seat)) showHint('That seat is taken');
+}
 
 // ---------------------------------------------------------------- benches
 function nearestSeat() {
@@ -244,31 +217,6 @@ function nearestSeat() {
   }
   return best;
 }
-
-// ---------------------------------------------------------------- chat
-const chatInput = $('chatInput');
-const chatLog = $('chatLog');
-const chatLines = [];
-function escapeHtml(t) { return t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
-function addChat(name, text, self = false) {
-  chatLines.push({ name, text, self, at: performance.now() });
-  if (chatLines.length > 7) chatLines.shift();
-  chatLog.innerHTML = chatLines.map((l) => `<li class="${l.self ? 'self' : ''}"><b>${escapeHtml(l.name)}</b> ${escapeHtml(l.text)}</li>`).join('');
-}
-chatInput.addEventListener('focus', () => player.keys.clear());
-chatInput.addEventListener('keydown', (e) => {
-  e.stopPropagation();
-  if (e.key === 'Escape') { chatInput.value = ''; chatInput.blur(); }
-  if (e.key !== 'Enter') return;
-  const text = chatInput.value.replace(/\s+/g, ' ').trim().slice(0, 140);
-  chatInput.value = '';
-  chatInput.blur();
-  canvas.focus();
-  if (!text) return;
-  speech.say(player, text, { name: player.name });
-  addChat(player.name, text, true);
-  mp.chat(text);
-});
 
 // ---------------------------------------------------------------- PiP of the LED wall feed
 const pipScene = new THREE.Scene();
@@ -310,15 +258,7 @@ function updateHud(dt) {
   if (hudTimer > 0) return;
   hudTimer = 0.2;
   const s = installation.getState();
-  $('count').textContent = s.count;
-  document.querySelectorAll('#meter div').forEach((d) => d.classList.toggle('on', Number(d.dataset.l) <= s.level));
-  $('levelName').textContent = `${s.level} · ${LEVELS[s.level].en}`;
-  $('themeName').textContent = THEMES[s.theme].caption;
-  $('avatarName').textContent = s.playerAvatar ? `${s.playerAvatar.sv}` : '— step into the zone';
-  $('avatarName').title = s.playerAvatar ? s.playerAvatar.en : '';
-  $('filterState').textContent = s.filterActive ? 'suppressing gesture' : 'idle';
-  $('filterRow').classList.toggle('active', s.filterActive);
-  $('fps').textContent = `${fps} fps`;
+  $('sitBtn').innerHTML = `<i>E</i> ${player.seat ? 'Stand up' : 'Sit down'}`;
   document.querySelectorAll('#gestures button').forEach((b) => b.classList.toggle('active', player.gesture === b.dataset.g));
   if (pose.running) {
     camStatus.textContent = pose.poses.length
@@ -328,11 +268,10 @@ function updateHud(dt) {
   if (!hintTimer) {
     const off = screenOffset(player.pos);
     const seat = nearestSeat();
-    if (player.seat) showHint('Du sitter på bänken – tryck E eller gå för att resa dig', 0.4);
-    else if (seat && !seat.occupant) showHint('Tryck E för att sätta dig på bänken', 0.4);
-    else if (nearKiosk()) showHint('Click the buttons on the pillar (or press E) to change the era', 0.4);
-    else if (!s.playerAvatar && off.d > 0 && off.d < 16 && Math.abs(off.lateral) < 11) showHint('Walk closer to the screen – the sensors will pick you up', 0.4);
-    else if (off.d < 0) showHint('Du står bakom skärmen – följ ljusslingorna runt till framsidan', 0.4);
+    if (player.seat) showHint('You’re sitting on the bench – press E or walk to stand up', 0.4);
+    else if (seat && !seat.occupant) showHint('Press E to sit on the bench', 0.4);
+    else if (!s.playerAvatar && !onStage(player.pos) && off.d > 0 && off.d < 16 && Math.abs(off.lateral) < 11) showHint('Step onto the wooden stage to appear on the screen', 0.4);
+    else if (off.d < 0) showHint('You’re behind the screen – follow the light strips round to the front', 0.4);
   }
 }
 
@@ -341,15 +280,59 @@ const clock = new THREE.Clock();
 let t = 0, fps = 0, fpsN = 0, fpsT = 0;
 let started = false;
 
+// The LED wall's own 3D scene is redrawn every other frame (30 Hz is plenty for a screen).
+let wallFrame = 0;
+function renderFrame() {
+  if (wallFrame++ % 2 === 0) installation.render(renderer);
+  composer.render();
+}
+
+/**
+ * Adaptive resolution: if the machine can't keep ~45 FPS, render fewer pixels; when it has been
+ * running at full speed for a while, try a step higher again. Text/UI stays sharp (it's HTML).
+ */
+const scaler = { acc: 0, frames: 0, calmUntil: 4, slow: 0, pending: null };
+function adaptResolution(rawDt, now) {
+  if (rawDt > 0.25) return; // tab was in the background – not a real frame time
+  if (now < scaler.calmUntil) { scaler.acc = 0; scaler.frames = 0; return; } // let shaders compile first
+  scaler.acc += rawDt; scaler.frames++;
+  if (scaler.acc < 1) return;
+  const avgMs = (scaler.acc / scaler.frames) * 1000;
+  scaler.acc = 0; scaler.frames = 0;
+  const pr = renderer.getPixelRatio();
+  // step down only after two slow seconds in a row, step up only after a long calm period
+  scaler.slow = avgMs > 22 ? scaler.slow + 1 : 0;
+  if (scaler.slow >= 2 && pr > 0.75) { scaler.pending = Math.max(0.75, pr - 0.25); scaler.slow = 0; scaler.calmUntil = now + 10; }
+  else if (avgMs < 17.5 && pr < MAX_PIXEL_RATIO) { scaler.pending = Math.min(MAX_PIXEL_RATIO, pr + 0.25); scaler.calmUntil = now + 8; }
+}
+
+/**
+ * Resizing the canvas clears it, so a new resolution is applied at the START of a frame, right
+ * before drawing. (Applying it after drawing showed one empty, black frame.)
+ */
+function applyPendingResolution() {
+  if (scaler.pending === null) return;
+  renderer.setPixelRatio(scaler.pending);
+  composer.setPixelRatio(scaler.pending);
+  scaler.pending = null;
+}
+
 function frame() {
   requestAnimationFrame(frame);
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const rawDt = clock.getDelta();
+  const dt = Math.min(rawDt, 0.05);
   simulate(dt);
-  installation.render(renderer);
-  composer.render();
+  applyPendingResolution();
+  renderFrame();
   renderPip();
-  if (started) updateHud(dt);
+  if (started) { updateHud(dt); adaptResolution(rawDt, t); }
+  if (fpsEl) fpsEl.textContent = `${fps} fps · ${renderer.getPixelRatio()}×`;
 }
+
+// ?fps in the URL shows a small FPS counter (for testing on different machines)
+const fpsEl = new URLSearchParams(location.search).has('fps') ? Object.assign(document.body.appendChild(document.createElement('div')), {
+  style: 'position:fixed;top:8px;right:10px;z-index:30;font:600 12px ui-monospace,monospace;color:#39ff9f;background:rgba(0,0,0,.55);padding:3px 8px;border-radius:6px',
+}) : null;
 
 function simulate(dt) {
   t += dt;
@@ -371,10 +354,46 @@ function simulate(dt) {
   world.update(dt, t, camera);
   speech.update();
   audio.updateListener(camera);
+  audio.setMood({
+    onStage: installation.standing ?? 0,
+    seated: installation.count - (installation.standing ?? 0),
+    talking: installation.talking,
+    dancing: installation.dancing,
+  });
 }
 
 /** Debug: advance the simulation without rendering (works even when the tab is hidden). */
 window.__sim = (seconds, step = 1 / 30) => { for (let i = 0; i < seconds / step; i++) simulate(step); };
+
+/**
+ * Debug: deterministic performance benchmark (works in hidden tabs too).
+ * Renders `frames` frames back to back and reports average CPU+GPU milliseconds per part.
+ * gl.finish() after each part makes the GPU time land in the right bucket.
+ */
+window.__bench = (frames = 60) => {
+  const gl = renderer.getContext();
+  const parts = { sim: 0, wall: 0, main: 0 };
+  const time = (key, fn) => { const t0 = performance.now(); fn(); gl.finish(); parts[key] += performance.now() - t0; };
+  renderer.info.autoReset = false;
+  for (let i = 0; i < 5; i++) { simulate(1 / 60); renderFrame(); }
+  gl.finish();
+  renderer.info.reset();
+  for (let i = 0; i < frames; i++) {
+    time('sim', () => simulate(1 / 60));
+    time('wall', () => { if (wallFrame++ % 2 === 0) installation.render(renderer); });
+    time('main', () => composer.render());
+  }
+  const calls = Math.round(renderer.info.render.calls / frames);
+  const tris = Math.round(renderer.info.render.triangles / frames);
+  renderer.info.autoReset = true;
+  const r = (v) => +(v / frames).toFixed(2);
+  const total = r(parts.sim + parts.wall + parts.main);
+  return {
+    msPerFrame: total, fps: +(1000 / total).toFixed(1), sim: r(parts.sim), wall: r(parts.wall), main: r(parts.main),
+    drawCalls: calls, triangles: tris,
+    canvas: `${renderer.domElement.width}x${renderer.domElement.height}`, pixelRatio: renderer.getPixelRatio(),
+  };
+};
 
 window.addEventListener('resize', () => {
   const w = window.innerWidth, h = window.innerHeight;
@@ -389,29 +408,22 @@ const enter = $('enter');
 $('loading').textContent = '';
 const nameInput = $('name');
 $('roomInfo').innerHTML = partyHost()
-  ? `Multiplayer · rum <b>${roomName()}</b> · alla som öppnar samma länk hamnar på samma torg (byt rum med <code>?room=namn</code>)`
-  : 'Single-player (ingen PartyKit-server konfigurerad)';
+  ? `Multiplayer · room <b>${roomName()}</b> · everyone who opens the same link ends up on the same square (change room with <code>?room=name</code>)`
+  : 'Single-player (no room server configured)';
 try { nameInput.value = localStorage.getItem('gh-name') || ''; } catch {}
+// The on-screen online indicator was removed (feedback v2); the connection state is logged instead.
 function updateOnline() {
-  const el = $('online');
-  if (!started) return;
-  if (!mp.net.socket) { el.textContent = 'Single-player'; el.className = 'off'; return; }
-  el.className = mp.online ? 'on' : 'off';
-  el.innerHTML = mp.online
-    ? `● Online · rum <b>${mp.net.room}</b> · ${mp.count} ${mp.count === 1 ? 'person' : 'personer'}${mp.isHost ? ' · värd' : ''}`
-    : '○ Ansluter…';
+  if (!started || !mp.net.socket) return;
+  logEvent(mp.online ? `online · room ${mp.net.room} · ${mp.count} connected${mp.isHost ? ' · host' : ''}` : 'connecting…');
 }
-$('online').onclick = () => {
-  const url = `${location.origin}${location.pathname}?room=${mp.net.room}`;
-  navigator.clipboard?.writeText(url).then(() => showHint('Länk till rummet kopierad – skicka den till en kompis!'));
-};
 enter.onclick = () => {
-  const name = (nameInput.value || '').trim() || `Granne ${Math.floor(Math.random() * 900 + 100)}`;
+  const name = (nameInput.value || '').trim() || `Neighbour ${Math.floor(Math.random() * 900 + 100)}`;
   try { localStorage.setItem('gh-name', name); } catch {}
   player.name = name;
   mp.start(name, player.rig.style);
   audio.init();
   started = true;
+  scaler.calmUntil = t + 4; // the first seconds are slow while shaders compile – don't adapt yet
   $('start').hidden = true;
   $('hud').hidden = false;
   canvas.focus();
@@ -421,4 +433,4 @@ enter.onclick = () => {
 frame();
 
 // expose for debugging in the console
-Object.assign(window, { THREE, scene, camera, player, crowd, installation, world, pose, mp });
+Object.assign(window, { THREE, scene, camera, player, crowd, installation, world, pose, mp, audio, renderer, composer });

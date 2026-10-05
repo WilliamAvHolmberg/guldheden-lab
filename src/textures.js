@@ -242,7 +242,7 @@ export function produceTexture(seed = 1) {
   }
   ctx.fillStyle = '#2f7a3a'; ctx.fillRect(0, H - 34, W, 34);
   ctx.fillStyle = '#e9f1e0'; ctx.font = 'bold 20px Helvetica, Arial';
-  ctx.fillText('FÄRSKT VARJE DAG', 16, H - 11);
+  ctx.fillText('FRESH EVERY DAY', 16, H - 11);
   return c;
 }
 
@@ -300,177 +300,83 @@ export function posterTexture() {
   }
   ctx.fillStyle = '#f1c453';
   ctx.font = 'bold 44px Georgia, serif';
-  ctx.fillText('DET', 30, 70);
-  ctx.fillText('INTERAKTIVA', 30, 112);
+  ctx.fillText('THE', 30, 70);
+  ctx.fillText('INTERACTIVE', 30, 112);
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 44px Georgia, serif';
-  ctx.fillText('ARKIVET', 30, 142 - 0);
+  ctx.fillText('ARCHIVE', 30, 142 - 0);
   ctx.font = '20px Helvetica, Arial';
   ctx.fillStyle = '#e8e8e8';
-  ctx.fillText('Kliv fram – bli en del av', 30, 420);
-  ctx.fillText('Guldhedstorgets historia.', 30, 446);
+  ctx.fillText('Step in – become part of', 30, 420);
+  ctx.fillText('Guldhedstorget’s history.', 30, 446);
   ctx.fillStyle = '#f1c453';
   ctx.font = 'bold 18px Helvetica, Arial';
-  ctx.fillText('GULDHEDSTORGET · HÖSTEN 2026', 30, 520);
+  ctx.fillText('GULDHEDSTORGET · AUTUMN 2026', 30, 520);
   return c;
 }
 
-/** Ground decal marking the interaction zone in front of the screen. */
-export function zoneDecalTexture() {
-  const S = 1024;
-  const c = makeCanvas(S, S), ctx = c.getContext('2d');
-  ctx.clearRect(0, 0, S, S);
-  const cx = S / 2, cy = S / 2;
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-  for (const [r, w] of [[500, 6], [340, 3], [180, 3]]) {
-    ctx.lineWidth = w;
-    ctx.setLineDash(r === 500 ? [] : [18, 14]);
-    ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, 0, false); ctx.stroke();
+/**
+ * The wooden stage floor with its painted markings. Canvas x = lateral (left → right as seen by the
+ * audience), canvas y = depth: top edge is next to the screen, bottom edge is where people step on.
+ * 1 px = 6.25 mm (2048 px = 12.8 m wide, 1120 px = 7 m deep).
+ */
+export function stageFloorTexture() {
+  const W = 2048, H = 1120, PX = 2048 / 12.8, rand = rng(31);
+  const c = makeCanvas(W, H), ctx = c.getContext('2d');
+  // boards running left–right, staggered joints
+  const boardH = 0.14 * PX;
+  for (let y = 0, row = 0; y < H; y += boardH, row++) {
+    let x = -rand() * 300;
+    while (x < W) {
+      const len = (1.6 + rand() * 1.6) * PX, v = rand();
+      const r = 150 + v * 40, g = 104 + v * 28, b = 62 + v * 18;
+      const grd = ctx.createLinearGradient(0, y, 0, y + boardH);
+      grd.addColorStop(0, `rgb(${r + 12 | 0},${g + 8 | 0},${b + 5 | 0})`);
+      grd.addColorStop(1, `rgb(${r - 14 | 0},${g - 12 | 0},${b - 8 | 0})`);
+      ctx.fillStyle = grd;
+      ctx.fillRect(x, y, len, boardH - 2);
+      // grain
+      ctx.strokeStyle = `rgba(70,40,20,${0.08 + rand() * 0.08})`;
+      ctx.lineWidth = 1;
+      for (let k = 0; k < 4; k++) {
+        const gy = y + 3 + rand() * (boardH - 6);
+        ctx.beginPath(); ctx.moveTo(x, gy);
+        ctx.bezierCurveTo(x + len * 0.3, gy + (rand() - 0.5) * 6, x + len * 0.7, gy + (rand() - 0.5) * 6, x + len, gy);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(40,24,12,0.7)';
+      ctx.fillRect(x + len - 2, y, 2, boardH - 2);
+      x += len;
+    }
+    ctx.fillStyle = 'rgba(30,18,8,0.8)';
+    ctx.fillRect(0, y + boardH - 2, W, 2);
   }
-  ctx.setLineDash([]);
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.font = 'bold 34px Helvetica, Arial';
+  noise(ctx, W, H, 14, rand);
+
+  // painted markings (cream paint, slightly worn)
+  const paint = 'rgba(245,236,214,0.88)';
+  ctx.fillStyle = paint;
   ctx.textAlign = 'center';
-  ctx.save(); ctx.translate(cx, cy - 420); ctx.rotate(Math.PI); ctx.fillText('KLIV IN · STEP IN', 0, 0); ctx.restore();
-  // footprints
-  const foot = (x, y, a) => {
-    ctx.save(); ctx.translate(x, y); ctx.rotate(a);
-    ctx.beginPath(); ctx.ellipse(0, 0, 5, 10, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(0, 13, 4, 4.5, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+  ctx.font = 'bold 120px Helvetica, Arial';
+  ctx.fillText('STEP IN', W / 2, H - 70);
+  // a footprint pair; toes point up (towards the screen)
+  const foot = (x, y, s = 1) => {
+    ctx.beginPath(); ctx.ellipse(x, y, 13 * s, 27 * s, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x, y - 40 * s, 11 * s, 13 * s, 0, 0, Math.PI * 2); ctx.fill();
   };
-  ctx.fillStyle = 'rgba(241,196,83,0.75)';
-  for (const [x, y] of [[-150, -250], [150, -250], [0, -260]]) {
-    foot(cx + x - 8, cy + y, 0);
-    foot(cx + x + 8, cy + y + 4, 0);
-  }
-  return c;
-}
-
-/** Info plaque next to the screen, including the privacy note. */
-export function plaqueTexture() {
-  const W = 512, H = 640;
-  const c = makeCanvas(W, H), ctx = c.getContext('2d');
-  ctx.fillStyle = '#1b1e22'; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = '#f1c453'; ctx.fillRect(0, 0, W, 12);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 40px Georgia, serif';
-  ctx.fillText('Det interaktiva', 36, 80);
-  ctx.fillText('arkivet', 36, 126);
-  ctx.font = '22px Helvetica, Arial';
-  ctx.fillStyle = '#d7d7d7';
-  const lines = [
-    'Kliv fram så får du en historisk',
-    'figur från Guldhedstorget som',
-    'rör sig som du.',
-    '',
-    'Ju fler grannar som deltar,',
-    'desto mer färg, ljus och musik.',
-    '',
-    'Gå nära någon – se vad som',
-    'händer mellan era figurer.',
-  ];
-  lines.forEach((l, i) => ctx.fillText(l, 36, 190 + i * 32));
-  ctx.fillStyle = '#2a2f35'; ctx.fillRect(24, 500, W - 48, 110);
-  ctx.fillStyle = '#9fd3b0';
-  ctx.font = 'bold 20px Helvetica, Arial';
-  ctx.fillText('INTEGRITET', 44, 534);
-  ctx.fillStyle = '#cfcfcf';
-  ctx.font = '18px Helvetica, Arial';
-  ctx.fillText('Sensorerna läser bara kroppens ledpunkter.', 44, 564);
-  ctx.fillText('Ingen video sparas eller skickas vidare.', 44, 590);
-  return c;
-}
-
-/** Children's crayon drawing of the square — one of the rotating backgrounds. */
-export function kidsDrawingTexture() {
-  const W = 2048, H = 768, rand = rng(42);
-  const c = makeCanvas(W, H), ctx = c.getContext('2d');
-  ctx.fillStyle = '#fbf7ee'; ctx.fillRect(0, 0, W, H);
-  const crayon = (color, width, pts, jitter = 3, passes = 3) => {
-    ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    for (let p = 0; p < passes; p++) {
-      ctx.globalAlpha = 0.55 + rand() * 0.3;
-      ctx.lineWidth = width * (0.7 + rand() * 0.5);
-      ctx.beginPath();
-      pts.forEach(([x, y], i) => {
-        const jx = x + (rand() - 0.5) * jitter, jy = y + (rand() - 0.5) * jitter;
-        i ? ctx.lineTo(jx, jy) : ctx.moveTo(jx, jy);
-      });
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-  };
-  const scribbleFill = (color, x, y, w, h, dens = 14) => {
-    for (let yy = y; yy < y + h; yy += dens * 0.5) {
-      crayon(color, dens, [[x, yy], [x + w, yy + (rand() - 0.5) * 6]], 6, 1);
-    }
-  };
-  // sky scribbles
-  scribbleFill('#8ec6ef', 0, 0, W, 420, 26);
-  // sun
-  ctx.fillStyle = '#ffd23d';
-  ctx.beginPath(); ctx.arc(1820, 120, 80, 0, Math.PI * 2); ctx.fill();
-  for (let i = 0; i < 12; i++) {
-    const a = i / 12 * Math.PI * 2;
-    crayon('#ffb400', 10, [[1820 + Math.cos(a) * 100, 120 + Math.sin(a) * 100], [1820 + Math.cos(a) * 160, 120 + Math.sin(a) * 160]]);
-  }
-  // clouds
-  for (const [x, y] of [[300, 120], [900, 90], [1350, 160]]) {
-    ctx.fillStyle = '#ffffff';
-    for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.arc(x + i * 45, y + Math.sin(i) * 12, 50, 0, Math.PI * 2); ctx.fill(); }
-  }
-  // grass
-  scribbleFill('#6cc24a', 0, 560, W, 210, 28);
-  // buildings: long yellow house with red roof, tall tower
-  scribbleFill('#f3dc8a', 1100, 300, 820, 290, 18);
-  crayon('#333', 6, [[1100, 300], [1920, 300], [1920, 590], [1100, 590], [1100, 300]]);
-  scribbleFill('#d9432e', 1080, 240, 860, 60, 18);
-  for (let i = 0; i < 7; i++) {
-    const x = 1140 + i * 110;
-    ctx.fillStyle = '#3d7fd1'; ctx.fillRect(x, 340, 60, 60);
-    crayon('#222', 4, [[x, 340], [x + 60, 340], [x + 60, 400], [x, 400], [x, 340]]);
-  }
-  // "screen" in the house with little figures
-  ctx.fillStyle = '#2b2b40'; ctx.fillRect(1230, 450, 520, 130);
-  crayon('#ff66cc', 5, [[1230, 450], [1750, 450], [1750, 580], [1230, 580], [1230, 450]]);
-  scribbleFill('#b8b8e8', 180, 180, 260, 400, 16); // tower
-  crayon('#333', 6, [[180, 180], [440, 180], [440, 580], [180, 580], [180, 180]]);
-  for (let r = 0; r < 6; r++) for (let q = 0; q < 3; q++) {
-    ctx.fillStyle = '#ffe36b'; ctx.fillRect(205 + q * 80, 200 + r * 62, 40, 36);
-  }
-  // trees
-  for (const x of [560, 760, 960]) {
-    crayon('#7a4a22', 22, [[x, 590], [x, 470]]);
-    ctx.fillStyle = '#2f9e44';
-    for (let i = 0; i < 6; i++) { ctx.beginPath(); ctx.arc(x + (rand() - 0.5) * 90, 420 + (rand() - 0.5) * 70, 55, 0, Math.PI * 2); ctx.fill(); }
-    ctx.fillStyle = '#e8322a';
-    for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.arc(x + (rand() - 0.5) * 100, 420 + (rand() - 0.5) * 80, 9, 0, Math.PI * 2); ctx.fill(); }
-  }
-  // flowers
-  for (let i = 0; i < 30; i++) {
-    const x = rand() * W, y = 640 + rand() * 110;
-    crayon('#2c8a2c', 5, [[x, y], [x, y - 40]]);
-    ctx.fillStyle = ['#ff4d6d', '#ffd23d', '#b04dff', '#ff8c1a'][i % 4];
-    for (let p = 0; p < 5; p++) { const a = p / 5 * Math.PI * 2; ctx.beginPath(); ctx.arc(x + Math.cos(a) * 10, y - 40 + Math.sin(a) * 10, 8, 0, Math.PI * 2); ctx.fill(); }
-  }
-  // stick people holding hands
-  const stick = (x, y, col) => {
-    ctx.strokeStyle = col;
-    crayon(col, 6, [[x, y - 110], [x, y - 40]]);
-    crayon(col, 6, [[x, y - 40], [x - 22, y]]);
-    crayon(col, 6, [[x, y - 40], [x + 22, y]]);
-    crayon(col, 6, [[x - 40, y - 90], [x + 40, y - 90]]);
-    ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(x, y - 132, 22, 0, Math.PI * 2); ctx.stroke();
-  };
-  [[640, 740, '#d62828'], [720, 740, '#1d4ed8'], [800, 740, '#7c3aed'], [1500, 740, '#111']].forEach(([x, y, c2]) => stick(x, y, c2));
-  // title in kid letters
-  ctx.fillStyle = '#e63946';
-  ctx.font = 'bold 86px "Comic Sans MS", "Chalkboard SE", cursive';
-  ctx.save(); ctx.rotate(-0.03); ctx.fillText('GULDHEDSTORGET', 520, 110); ctx.restore();
-  ctx.fillStyle = '#333';
-  ctx.font = '38px "Comic Sans MS", "Chalkboard SE", cursive';
-  ctx.fillText('av Ella 7 år, Omar 8 år & klass 2B', 540, 175);
+  const pair = (x, y) => { foot(x - 24, y + 6); foot(x + 24, y); };
+  ctx.fillStyle = 'rgba(241,196,83,0.92)';
+  // two people close together → they chat
+  const talkX = W * 0.27, talkY = H * 0.5;
+  pair(talkX - 70, talkY); pair(talkX + 70, talkY);
+  // three people close together → they dance
+  const danceX = W * 0.73, danceY = H * 0.5;
+  pair(danceX - 120, danceY + 30); pair(danceX, danceY - 40); pair(danceX + 120, danceY + 30);
+  // no captions on purpose: visitors should discover what standing together does
+  // painted border line
+  ctx.strokeStyle = 'rgba(245,236,214,0.55)';
+  ctx.lineWidth = 10;
+  ctx.strokeRect(24, 24, W - 48, H - 48);
   return c;
 }
 
@@ -533,15 +439,15 @@ export function backPanelTexture() {
   }
   ctx.fillStyle = '#f1c453';
   ctx.font = 'bold 110px Georgia, serif';
-  ctx.fillText('DET INTERAKTIVA', 90, 190);
+  ctx.fillText('THE INTERACTIVE', 90, 190);
   ctx.fillStyle = '#ffffff';
-  ctx.fillText('ARKIVET', 90, 310);
+  ctx.fillText('ARCHIVE', 90, 310);
   ctx.fillStyle = '#d7dbe0';
   ctx.font = '44px Helvetica, Arial';
-  ctx.fillText('Gå runt till framsidan – kliv in och bli en del', 94, 400);
-  ctx.fillText('av Guldhedstorgets historia.', 94, 456);
+  ctx.fillText('Walk round to the front – step in and become', 94, 400);
+  ctx.fillText('part of Guldhedstorget’s history.', 94, 456);
   ctx.fillStyle = '#f1c453';
   ctx.font = 'bold 34px Helvetica, Arial';
-  ctx.fillText('→  FÖLJ LJUSSLINGORNA I MARKEN', 94, 520);
+  ctx.fillText('→  FOLLOW THE LIGHT STRIPS IN THE GROUND', 94, 520);
   return c;
 }
