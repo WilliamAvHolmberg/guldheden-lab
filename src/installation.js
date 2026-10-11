@@ -7,7 +7,7 @@ import { hashStr } from './net.js';
 import { staticBatch } from './batch.js';
 import {
   rng, makeCanvas, toTexture, gradientSkyTexture, signTexture, sparkleTexture,
-  heartTexture, stageFloorTexture, backPanelTexture,
+  heartTexture, stageFloorTexture, backPanelTexture, plazaField1944Texture, lawn1944Texture,
 } from './textures.js';
 
 export const LEVELS = [
@@ -183,21 +183,48 @@ export class Installation {
       return m;
     };
     const winMat = M('#2c3238', 0.25, 0.4), frameMat = M('#f2efe6', 0.7);
-    // pale concrete slabs
-    const c = makeCanvas(256, 256), ctx = c.getContext('2d');
-    ctx.fillStyle = '#c4bdac'; ctx.fillRect(0, 0, 256, 256);
-    ctx.strokeStyle = '#968e7e'; ctx.lineWidth = 3;
-    for (let i = 0; i <= 256; i += 64) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 256); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(256, i); ctx.stroke(); }
-    g.add(this.stageGround('#ffffff', toTexture(c), 3));
+    // the square as in the 1940s photos: big rectangular fields (6 × 4 m) of pale natural-stone flags,
+    // framed by bands of darker setts. 78 m wide = 13 fields, so a frame line runs through x = ±3.
+    {
+      const geo = new THREE.PlaneGeometry(78, 40);
+      const uv = geo.attributes.uv;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 78 / 6, uv.getY(i) * 40 / 4);
+      const ground = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: toTexture(plazaField1944Texture(6, 4)), roughness: 0.9 }));
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.z = -10; // frame lines at z = 10, 6, 2, -2, -6, -10 (along the street kerb)
+      ground.receiveShadow = true;
+      g.add(ground);
+    }
     // the street the cars use, with a kerb on each side
-    add(new THREE.BoxGeometry(80, 0.02, 2.8), M('#6d6c68', 0.95), 0, 0.012, -11.75, false);
-    add(new THREE.BoxGeometry(80, 0.1, 0.25), M('#9b968c', 0.9), 0, 0.05, -10.25, false);
-    add(new THREE.BoxGeometry(80, 0.1, 0.25), M('#9b968c', 0.9), 0, 0.05, -13.25, false);
+    add(new THREE.BoxGeometry(80, 0.02, 2.8), M('#a39d90', 0.95), 0, 0.012, -11.75, false); // pale, dusty 1940s asphalt
+    add(new THREE.BoxGeometry(80, 0.1, 0.25), M('#d8d2c4', 0.9), 0, 0.05, -10.25, false); // light granite kerbs
+    add(new THREE.BoxGeometry(80, 0.1, 0.25), M('#d8d2c4', 0.9), 0, 0.05, -13.25, false);
 
     // lawn with green slatted benches and white flower boxes (front left in the photo)
-    add(new THREE.BoxGeometry(17, 0.1, 4.6), M('#5e8f3a', 1), -10.5, 0.05, -7.3, false);
     const benchGreen = M('#2d5a39', 0.7), white = M('#f3efe4', 0.8);
     const flowerCols = ['#d2384a', '#e9677a', '#f2c14e', '#c43b6b'];
+    const lawnTex = toTexture(lawn1944Texture(), { repeat: [17 / 4, 4.6 / 4] });
+    add(new THREE.BoxGeometry(17, 0.1, 4.6), new THREE.MeshStandardMaterial({ map: lawnTex, roughness: 1 }), -10.5, 0.05, -7.3, false);
+    // low light-stone kerb around the lawn
+    const kerb = M('#ddd7c9', 0.9);
+    add(new THREE.BoxGeometry(17.3, 0.14, 0.15), kerb, -10.5, 0.07, -4.95, false);
+    add(new THREE.BoxGeometry(17.3, 0.14, 0.15), kerb, -10.5, 0.07, -9.65, false);
+    add(new THREE.BoxGeometry(0.15, 0.14, 4.85), kerb, -1.93, 0.07, -7.3, false);
+    // front-left lawn (foreground of the photo), left of where the avatars stand; the walkers' path runs between the lawns
+    const frontLawn = toTexture(lawn1944Texture(), { repeat: [12.4 / 4, 4.1 / 4] });
+    add(new THREE.BoxGeometry(12.4, 0.1, 4.1), new THREE.MeshStandardMaterial({ map: frontLawn, roughness: 1 }), -12.8, 0.05, -0.65, false);
+    add(new THREE.BoxGeometry(12.7, 0.14, 0.15), kerb, -12.8, 0.07, -2.75, false);
+    add(new THREE.BoxGeometry(12.7, 0.14, 0.15), kerb, -12.8, 0.07, 1.45, false);
+    add(new THREE.BoxGeometry(0.15, 0.14, 4.35), kerb, -6.55, 0.07, -0.65, false);
+    for (const x of [-11.2, -8.4]) {
+      add(new THREE.BoxGeometry(1.7, 0.06, 0.45), benchGreen, x, 0.48, -1.9);
+      add(new THREE.BoxGeometry(1.7, 0.45, 0.05), benchGreen, x, 0.78, -2.15).rotation.x = -0.15;
+      for (const lx of [-0.75, 0.75]) add(new THREE.BoxGeometry(0.06, 0.48, 0.4), white, x + lx, 0.24, -1.95);
+    }
+    add(new THREE.BoxGeometry(0.9, 0.42, 0.6), white, -9.8, 0.31, -2.2);
+    for (let k = 0; k < 7; k++) {
+      add(new THREE.SphereGeometry(0.1 + r() * 0.05, 8, 6), M(flowerCols[k % flowerCols.length], 0.8), -9.8 + (r() - 0.5) * 0.7, 0.6, -2.2 + (r() - 0.5) * 0.4, false);
+    }
     for (let i = 0; i < 6; i++) {
       const x = -17.5 + i * 2.7;
       // bench: seat + back + white legs
@@ -794,13 +821,13 @@ export class Installation {
       [new THREE.Vector3(0, 0.03, 18.5), new THREE.Vector3(0, 0.03, 14.5), W(STAGE.x0 - 0.3, 0)], // from the big street (south)
       [new THREE.Vector3(-27, 0.03, -1), new THREE.Vector3(-19, 0.03, 0.5), new THREE.Vector3(-13.5, 0.03, 5), W(STAGE.x0 - 0.3, -4.5)], // west
       [new THREE.Vector3(17.5, 0.03, -21), new THREE.Vector3(15, 0.03, -9), new THREE.Vector3(12.5, 0.03, 2.5), W(STAGE.x0 - 0.3, 4.5)], // north path
-      [new THREE.Vector3(-3, 0.03, -18.5), new THREE.Vector3(-9.5, 0.03, -9), new THREE.Vector3(-10.8, 0.03, 0), W(STAGE.x0 - 1.5, -6.5), W(STAGE.x0 - 0.3, -5.6)], // from behind the screen
+      [new THREE.Vector3(-3, 0.03, -18.5), new THREE.Vector3(-9.5, 0.03, -9), W(STAGE.x0 + 3.5, -10), W(STAGE.x0 + 1.2, -7.2)], // from behind the screen, down to the stage's side
     ];
     this.guideMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
-      uniforms: { phase: { value: 0 }, intensity: { value: 1 }, color: { value: new THREE.Color('#ffc95a') } },
+      uniforms: { phase: { value: 0 }, intensity: { value: 1 }, color: { value: new THREE.Color('#ffb03a') } },
       vertexShader: /* glsl */`
         varying vec2 vUv;
         void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
@@ -810,25 +837,34 @@ export class Installation {
         varying vec2 vUv;
         void main() {
           float across = 1.0 - abs(vUv.y * 2.0 - 1.0);
-          float pulse = smoothstep(0.72, 1.0, fract(vUv.x * 0.14 - phase));
-          float a = (0.3 + 1.8 * pulse) * smoothstep(0.0, 0.7, across) * intensity;
+          // steady glow + soft bands of light drifting slowly towards the stage (shows the way, no flicker)
+          float band = 0.5 + 0.5 * sin((vUv.x / 4.0 - phase) * 6.2832);
+          float a = (0.18 + 3.2 * pow(band, 4.0)) * smoothstep(0.0, 0.6, across) * intensity;
           gl_FragColor = vec4(color * a, 1.0);
           #include <colorspace_fragment>
         }`,
     });
-    const housing = M('#1a1c1f', 0.4, 0.5);
+    // flush, low-contrast steel inlay: reads as part of the paving, not as a black stripe
+    const housing = M('#585b5e', 0.45, 0.6);
     this.guides = new THREE.Group();
     for (const pts of paths) {
       const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
       const len = curve.getLength();
       const n = Math.max(2, Math.round(len / 0.2));
-      const sampled = curve.getSpacedPoints(n);
-      for (const [w, mat, y] of [[0.2, housing, 0.022], [0.09, this.guideMat, 0.028]]) {
+      // stop where the strip reaches the stage (or would run under a bench / the screen), leaving a small gap
+      const sampled = [];
+      for (const p of curve.getSpacedPoints(n)) {
+        const l = toScreenLocal(p, _v);
+        if (l.x > STAGE.x0 - 0.25 && l.x < STAGE.x1 + 0.6 && l.z > STAGE.z0 - 0.25 && l.z < STAGE.z1 + 0.25) break;
+        sampled.push(p);
+      }
+      if (sampled.length < 2) continue;
+      for (const [w, mat, y] of [[0.11, housing, 0.021], [0.055, this.guideMat, 0.024]]) {
         const pos = [], uv = [], idx = [];
         let dist = 0;
         sampled.forEach((p, i) => {
           if (i > 0) dist += p.distanceTo(sampled[i - 1]);
-          const nxt = sampled[Math.min(i + 1, n)], prv = sampled[Math.max(i - 1, 0)];
+          const nxt = sampled[Math.min(i + 1, sampled.length - 1)], prv = sampled[Math.max(i - 1, 0)];
           const dir = _v.subVectors(nxt, prv).setY(0).normalize();
           const side = _v2.set(-dir.z, 0, dir.x).multiplyScalar(w / 2);
           pos.push(p.x - side.x, y, p.z - side.z, p.x + side.x, y, p.z + side.z);
@@ -1352,11 +1388,10 @@ export class Installation {
       s.beam.material.uniforms.color.value.copy(col);
       s.beam.material.uniforms.intensity.value = sp * (0.06 + night * 0.3);
     });
-    // guide strips in the paving: faster pulses and warmer colour as the crowd grows
-    this.guidePhase += dt * (0.45 + e * 0.12);
+    // guide strips in the paving: a quiet warm glow, a little brighter at night
+    this.guidePhase += dt * 0.3; // bands move ~1.2 m/s
     this.guideMat.uniforms.phase.value = this.guidePhase;
-    this.guideMat.uniforms.intensity.value = 1.8 + night * 1.2;
-    this.guideMat.uniforms.color.value.set(e > 3.5 ? '#ff7ab0' : '#ffc95a');
+    this.guideMat.uniforms.intensity.value = 1.5 + night * 0.6;
     // festoon lights
     const f = smooth(2.2, 3.0, e);
     const bright = 0.35 + f * (1.4 + night * 2.2);

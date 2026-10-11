@@ -178,11 +178,11 @@ const actions = {
   },
   sensor: () => {
     installation.setSensorView(!installation.sensorView);
-    $('sensorBtn').classList.toggle('on', installation.sensorView);
+    $('sensorBtn')?.classList.toggle('on', installation.sensorView);
   },
   screen: () => {
     pipMode = pipMode === 'small' ? 'large' : pipMode === 'large' ? 'off' : 'small';
-    $('screenBtn').innerHTML = `<i>V</i> Screen feed: ${PIP_LABEL[pipMode]}`;
+    $('screenBtn') && ($('screenBtn').innerHTML = `<i>V</i> Screen feed: ${PIP_LABEL[pipMode]}`);
   },
   sit: toggleSit,
   sound: () => {

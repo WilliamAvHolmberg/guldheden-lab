@@ -2,8 +2,8 @@
 //   nobody on the stage          → street ambience
 //   1–2 on the stage, or someone sitting on a bench → a soft-tempo song (random of 3)
 //   3+ on the stage              → a high-tempo song (random of 3)
-//   avatars talking (a duo)      → laughter + a murmur of people talking
-// Music, murmur and laughter come from the LED wall's speakers (spatialised at the wall);
+//   avatars talking (a duo)      → a murmur of people talking
+// Music and murmur come from the LED wall's speakers (spatialised at the wall);
 // the street ambience is all around you.
 
 const TRACKS = {
@@ -28,7 +28,6 @@ export class AudioEngine {
     this.candidateSince = 0;
     this.lastTrack = {};
     this.talking = false;
-    this.lastLaugh = -99;
   }
 
   init() {
@@ -55,7 +54,6 @@ export class AudioEngine {
 
     this.street = this.makeLoop(url('street'), this.master, true);
     this.murmur = this.makeLoop(url('murmur'), this.inst, true);
-    this.loadLaugh();
     this.applyMood('street', true);
   }
 
@@ -70,15 +68,6 @@ export class AudioEngine {
     gain.gain.value = 0;
     this.ctx.createMediaElementSource(el).connect(gain).connect(dest);
     return { el, gain, playing: false };
-  }
-
-  async loadLaugh() {
-    try {
-      const buf = await (await fetch(url('laugh'))).arrayBuffer();
-      this.laughBuffer = await this.ctx.decodeAudioData(buf);
-    } catch (e) {
-      console.warn('laugh sound unavailable', e);
-    }
   }
 
   fadeTo(node, value, onSilent) {
@@ -157,24 +146,7 @@ export class AudioEngine {
       this.talking = talking;
       if (talking) this.play(this.murmur);
       this.fadeTo(this.murmur, talking ? MURMUR_GAIN : 0, () => this.stop(this.murmur));
-      if (talking) this.laugh();
     }
-    // keep laughing now and then while the chat goes on
-    if (talking && now - this.lastLaugh > 9 + Math.random() * 6) this.laugh();
-  }
-
-  /** One burst of laughter (not more often than every few seconds). */
-  laugh() {
-    if (!this.ctx || !this.laughBuffer) return;
-    const now = this.ctx.currentTime;
-    if (now - this.lastLaugh < 4) return;
-    this.lastLaugh = now;
-    const src = this.ctx.createBufferSource();
-    src.buffer = this.laughBuffer;
-    const g = this.ctx.createGain();
-    g.gain.value = 0.9;
-    src.connect(g).connect(this.inst);
-    src.start();
   }
 
   setPannerPos(x, y, z) {

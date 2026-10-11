@@ -9,7 +9,7 @@ Ordning: lägst hängande frukt först. **🧪 = William testar innan vi går vi
 
 ## 🔄 Pågår
 
-_(tomt – allt från PDF:en är byggt, väntar på test)_
+_(tomt)_
 
 ## 🧪 Att testa (William)
 
@@ -29,7 +29,7 @@ Kör `npm run dev` + `npm run party` → http://localhost:5199 (lägg till `?fps
 7. **Interaktionsregler** · ✔ byggt
    - **Tom scen:** svartvit, repig gammal film · 1940-talsfigurer promenerar · 1940-talsbilar (PV444-stil + skåpbil) kör förbi
    - **1+ på scenen:** skärmen går från svartvitt → färg, lampor runt skärmen tänds, mjuk låt
-   - **2 nära varandra:** avatarerna vänder sig mot varandra och pratar – **pratbubblor med historiska fakta på engelska** (byter var 6:e sek), skratt + sorl, lamporna runt skärmen "jagar"
+   - **2 nära varandra:** avatarerna vänder sig mot varandra och pratar – **pratbubblor med historiska fakta på engelska** (byter var 6:e sek), sorl, lamporna runt skärmen "jagar"
    - **3+ nära varandra:** avatarerna dansar i en ring, gnistor/hjärtan + konfetti på skärmen, varma vintage-spotlights på scenen (och på skärmen), regnbågsljus runt skärmen, snabb låt
    - **Sitter på bänk:** avataren syns **stående** · **två på samma bänk:** avatarerna pratar
    - Faktalistan: `src/facts.js` (14 st) – **läs gärna igenom och stryk/ändra det ni inte står för**
@@ -43,7 +43,7 @@ Kör `npm run dev` + `npm run party` → http://localhost:5199 (lägg till `?fps
 
 1. **Städa gränssnittet** – bara `+ Visitor`, `Clear square`, `Day`, `Sit down (E)`, `Sound on` + gesterna kvar. Webbkamera finns kvar på `C`.
 2. **Ta bort pelaren och epokerna** – skärmen visar bara 1944.
-3. **Ljud** – era låtar efter ljudreglerna, ett gatuljud, skratt + sorl (public domain) när avatarer pratar. Online-raden borttagen.
+3. **Ljud** – era låtar efter ljudreglerna, ett gatuljud, sorl (public domain) när avatarer pratar. Online-raden borttagen.
 9. **"The virtual square looks more like the real one"** – i PDF:en står den under *Screen Background*, så jag har tolkat den som torget **på skärmen** och gjort den i 8. Vill ni att 3D-torget man går på också ska justeras mot verkligheten? Säg till.
 
 **Prestandamätning** (samma dator, samma vinkel, upplösning 1,5×, bästa av 5 × 60 bildrutor; "före" = samma kod med optimeringarna avstängda)
@@ -59,10 +59,15 @@ Mätverktyg: `__bench(60)` i webbläsarkonsolen.
 
 ## 💬 Beslut
 
+- Karaktärer: behålls som de var (realistiska Rocketbox-avatarer och en förfinad low-poly-version testades och valdes bort)
 - Pratbubblor: historiska fakta, **på engelska** – och allt i appen ska vara på engelska
 - Fotspår: bara vägledning, inget händer när man står på dem
 - Gatuljud: bara ett (de två filerna var identiska) · Sorl: fritt ljud (public domain, Wikimedia Commons)
 - Webbkamera: kvar på `C` · Online-raden: bort
+- Skratt: borttaget helt (feedback v3) – bara sorl när avatarerna pratar
+- Fotspåren: skoavtryck utan tår, med tån mot skärmen
+- Ljusslingorna i marken: smal infälld stållist med bärnstensfärgat ljus, tydliga mjuka ljuspulser som vandrar mot scenen (ingen svart list, inget rosa). De slutar alltid vid scenkanten – ingen slinga går in på scenen
+- Skärmens 1944-mark: stora rektanglar (6 × 4 m) av ljusa, oregelbundna naturstensplattor, inramade av band av mörkare gatsten – som på ArkDes-fotot från 1940-talet (ARKM.1962-101-0955 på Wikimedia Commons) · gräsmatta med naturlig variation och ljus stenkant · en gräsmatta till i förgrunden till vänster med gröna bänkar och blomlåda, som på färgfotot · ljus asfalt och ljusa kantstenar på gatan
 
 ## ⚠️ Inför deploy
 

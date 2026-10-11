@@ -359,12 +359,12 @@ export function stageFloorTexture() {
   ctx.textAlign = 'center';
   ctx.font = 'bold 120px Helvetica, Arial';
   ctx.fillText('STEP IN', W / 2, H - 70);
-  // a footprint pair; toes point up (towards the screen)
-  const foot = (x, y, s = 1) => {
-    ctx.beginPath(); ctx.ellipse(x, y, 13 * s, 27 * s, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(x, y - 40 * s, 11 * s, 13 * s, 0, 0, Math.PI * 2); ctx.fill();
+  // a shoe-print pair pointing up (towards the screen): wide forefoot in front, smaller heel behind
+  const foot = (x, y, s = 1, side = 1) => {
+    ctx.beginPath(); ctx.ellipse(x, y - 18 * s, 15 * s, 27 * s, side * 0.1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x - side * 2 * s, y + 25 * s, 10 * s, 12 * s, 0, 0, Math.PI * 2); ctx.fill();
   };
-  const pair = (x, y) => { foot(x - 24, y + 6); foot(x + 24, y); };
+  const pair = (x, y) => { foot(x - 24, y + 6, 1, 1); foot(x + 24, y, 1, -1); };
   ctx.fillStyle = 'rgba(241,196,83,0.92)';
   // two people close together → they chat
   const talkX = W * 0.27, talkY = H * 0.5;
@@ -449,5 +449,99 @@ export function backPanelTexture() {
   ctx.fillStyle = '#f1c453';
   ctx.font = 'bold 34px Helvetica, Arial';
   ctx.fillText('→  FOLLOW THE LIGHT STRIPS IN THE GROUND', 94, 520);
+  return c;
+}
+
+/**
+ * 1944 screen: one paving field of Guldhedstorget as in the 1940s photos (ArkDes ARKM.1962-101-0955):
+ * a large rectangle of pale, irregular natural-stone flags framed by a darker band of small setts.
+ * The texture covers one field of `wm` × `hm` metres and tiles into the grid of big rectangles.
+ */
+export function plazaField1944Texture(wm = 6, hm = 4, border = 0.38) {
+  const PPM = 200, W = Math.round(wm * PPM), H = Math.round(hm * PPM), rand = rng(1944);
+  const c = makeCanvas(W, H), ctx = c.getContext('2d');
+  // irregular flags (~1 m) via a jittered grid + nearest-two-points joints
+  const nx = Math.round(wm / 0.95), ny = Math.round(hm / 0.95), cw = W / nx, ch = H / ny;
+  const pts = [];
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    pts.push({ x: (i + 0.15 + rand() * 0.7) * cw, y: (j + 0.15 + rand() * 0.7) * ch, tone: rand() });
+  }
+  const img = ctx.createImageData(W, H), d = img.data;
+  for (let y = 0; y < H; y++) {
+    const cy = Math.floor(y / ch);
+    for (let x = 0; x < W; x++) {
+      const cx = Math.floor(x / cw);
+      let d1 = 1e9, d2 = 1e9, best = pts[0];
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+        const ix = cx + ox, iy = cy + oy;
+        if (ix < 0 || iy < 0 || ix >= nx || iy >= ny) continue;
+        const p = pts[iy * nx + ix], dx = p.x - x, dy = p.y - y, dd = dx * dx + dy * dy;
+        if (dd < d1) { d2 = d1; d1 = dd; best = p; } else if (dd < d2) d2 = dd;
+      }
+      const edge = Math.sqrt(d2) - Math.sqrt(d1);
+      const k = (y * W + x) * 4, t = best.tone;
+      let r = 214 + t * 16, g = 206 + t * 14, b = 188 + t * 12;
+      if (edge < 3) { const f = 1 - edge / 3; r -= 40 * f; g -= 40 * f; b -= 38 * f; }
+      d[k] = r; d[k + 1] = g; d[k + 2] = b; d[k + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  // weathering
+  for (let i = 0; i < 120; i++) {
+    const x = rand() * W, y = rand() * H, r = 10 + rand() * 50;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, rand() < 0.6 ? 'rgba(90,80,62,0.07)' : 'rgba(255,250,236,0.08)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  // the frame: half a band on each edge (neighbouring fields complete it), small grey setts
+  const bw = (border / 2) * PPM, sw = 0.11 * PPM, sl = 0.16 * PPM;
+  const band = (x0, y0, w, h, alongX) => {
+    ctx.fillStyle = '#6f6a60';
+    ctx.fillRect(x0, y0, w, h);
+    const rows = Math.max(1, Math.round((alongX ? h : w) / sw));
+    for (let rI = 0; rI < rows; rI++) {
+      let p = -rand() * sl;
+      while (p < (alongX ? w : W + H)) {
+        const len = sl * (0.8 + rand() * 0.4), v = 128 + rand() * 30;
+        ctx.fillStyle = `rgb(${v + 6 | 0},${v + 2 | 0},${v - 8 | 0})`;
+        if (alongX) ctx.fillRect(x0 + p + 1.5, y0 + rI * (h / rows) + 1.5, len - 3, h / rows - 3);
+        else ctx.fillRect(x0 + rI * (w / rows) + 1.5, y0 + p + 1.5, w / rows - 3, len - 3);
+        p += len;
+        if (!alongX && p > h) break;
+      }
+    }
+  };
+  band(0, 0, W, bw, true);
+  band(0, H - bw, W, bw, true);
+  band(0, 0, bw, H, false);
+  band(W - bw, 0, bw, H, false);
+  noise(ctx, W, H, 12, rand);
+  return c;
+}
+
+/** 1944 screen: the lawn – uneven green with lighter, sun-dried and worn patches. */
+export function lawn1944Texture() {
+  const S = 512, rand = rng(4419);
+  const c = makeCanvas(S, S), ctx = c.getContext('2d');
+  ctx.fillStyle = '#6a9440';
+  ctx.fillRect(0, 0, S, S);
+  for (let i = 0; i < 220; i++) {
+    const x = rand() * S, y = rand() * S, r = 8 + rand() * 40;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    const col = rand() < 0.5 ? '78,112,44' : rand() < 0.7 ? '132,160,74' : '176,170,112';
+    g.addColorStop(0, `rgba(${col},0.35)`);
+    g.addColorStop(1, `rgba(${col},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  // blades
+  for (let i = 0; i < 9000; i++) {
+    const x = rand() * S, y = rand() * S;
+    ctx.fillStyle = rand() < 0.5 ? 'rgba(40,70,24,0.35)' : 'rgba(170,196,110,0.3)';
+    ctx.fillRect(x, y, 1, 2 + rand() * 3);
+  }
+  noise(ctx, S, S, 10, rand, false);
   return c;
 }

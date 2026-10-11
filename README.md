@@ -111,12 +111,12 @@ Cloudflare account. (PartyKit's shared `partykit.dev` platform currently refuses
   1940s people strolling and 1940s cars driving past. Street ambience plays.
 - **Someone steps in**: the picture turns to colour, the bulbs around the wall light up, a soft song plays.
 - **Two close together** (or two on the same bench): their avatars turn to each other and chat, with
-  speech bubbles showing historical facts (`src/facts.js`), laughter and a murmur of voices.
+  speech bubbles showing historical facts (`src/facts.js`), and a murmur of voices.
 - **Three or more close together**: their avatars dance in a ring with sparkles and confetti, vintage
   spotlights light the stage and a high-tempo song plays.
 - **Music**: the group's own songs and sounds in `public/audio` (see `CREDITS.md` there).
 - **Content filter**: a hand held at the mouth (e.g. smoking) is not mirrored. The avatar's arm stays down.
-- **Wayfinding**: LED light strips in the paving pulse from the entrances to the front of the stage.
+- **Wayfinding**: Thin LED strips set flush in the paving glow softly from the entrances to the front of the stage.
 - **"+ Visitor"** spawns someone at the edge of the audience area who hurries to the stage (~4–6 s).
 - **Performance**: static scenery is merged per material, each character is a single skinned mesh,
   the wall's scene renders at 30 Hz and the resolution adapts to the machine. `?fps` shows an FPS
