@@ -30,7 +30,8 @@ Kör `npm run dev` + `npm run party` → http://localhost:5199 (lägg till `?fps
    - **Tom scen:** svartvit, repig gammal film · 1940-talsfigurer promenerar · 1940-talsbilar (PV444-stil + skåpbil) kör förbi
    - **1+ på scenen:** skärmen går från svartvitt → färg, lampor runt skärmen tänds, mjuk låt
    - **2 nära varandra:** avatarerna vänder sig mot varandra och pratar – **pratbubblor med historiska fakta på engelska** (byter var 6:e sek), sorl, lamporna runt skärmen "jagar"
-   - **3+ nära varandra:** avatarerna dansar i en ring, gnistor/hjärtan + konfetti på skärmen, varma vintage-spotlights på scenen (och på skärmen), regnbågsljus runt skärmen, snabb låt
+   - **3+ på scenen (var som helst):** varma vintage-spotlights på scenen (och på skärmen) tänds
+   - **3+ nära varandra:** avatarerna dansar i en ring, gnistor/hjärtan + konfetti på skärmen, regnbågsljus runt skärmen, snabb låt
    - **Sitter på bänk:** avataren syns **stående** · **två på samma bänk:** avatarerna pratar
    - Faktalistan: `src/facts.js` (14 st) – **läs gärna igenom och stryk/ändra det ni inte står för**
    - 🧪 Testa varje nivå – `+ Visitor` flera gånger ger lätt både par och grupper

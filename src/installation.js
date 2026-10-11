@@ -56,6 +56,7 @@ export class Installation {
     this.dancing = false;
     this.colour = 0; // 0 = black & white (nobody on stage), 1 = full colour
     this.spotLevel = 0;
+    this.danceLevel = 0;
     this.sensorView = false;
     this.muted = false;
     this.onShared = null; // (patch) => void, called when the local user changes shared state
@@ -1005,7 +1006,9 @@ export class Installation {
     this.standing = active.filter((tr) => !tr.seat).length;
     // black & white while the stage is empty, full colour as soon as someone steps in
     this.colour += ((this.count > 0 ? 1 : 0) - this.colour) * (1 - Math.exp(-dt * 1.6));
-    this.spotLevel += ((this.dancing ? 1 : 0) - this.spotLevel) * (1 - Math.exp(-dt * 2));
+    // spotlights: as soon as 3+ people stand on the stage (close together or not); confetti only while they dance
+    this.spotLevel += ((this.dancing || this.standing >= 3 ? 1 : 0) - this.spotLevel) * (1 - Math.exp(-dt * 2));
+    this.danceLevel += ((this.dancing ? 1 : 0) - this.danceLevel) * (1 - Math.exp(-dt * 2));
 
     // --- chat & dance groups ---
     this.updateGroups(active, t);
@@ -1333,7 +1336,7 @@ export class Installation {
       c.material.uniforms.color.value.set('#ffe2b0'); // warm, vintage
     });
     // confetti while people dance
-    const cf = this.spotLevel;
+    const cf = this.danceLevel;
     this.confetti.visible = cf > 0.01;
     this.confetti.material.opacity = cf;
     if (this.confetti.visible) {
@@ -1376,8 +1379,7 @@ export class Installation {
       const on = this.count > 0 ? Math.sin(t * 8 + i) > -0.2 : Math.sin(t * 1.5 + i) > 0.9;
       led.material.color.set(on ? (this.count > 0 ? '#ff2a2a' : '#661010') : '#200505');
     });
-    // spotlights
-    // vintage spotlights on the stage while people dance
+    // vintage spotlights on the stage when 3+ people stand on it
     const sp = this.spotLevel;
     const fest = e > 3.5;
     this.spots.forEach((s) => {
