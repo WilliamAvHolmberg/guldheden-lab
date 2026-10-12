@@ -1,17 +1,15 @@
-// Sound design (feedback v2), driven by the group's own recordings in public/audio:
-//   nobody on the stage          → street ambience
+// Sound design (feedback v2, v4), driven by the group's own recordings in public/audio:
+//   nobody on the stage          → silence (feedback v4: no ambience while the stage is empty)
 //   1–2 on the stage, or someone sitting on a bench → a soft-tempo song (random of 3)
 //   3+ on the stage              → a high-tempo song (random of 3)
 //   avatars talking (a duo)      → a murmur of people talking
-// Music and murmur come from the LED wall's speakers (spatialised at the wall);
-// the street ambience is all around you.
+// Music and murmur come from the LED wall's speakers (spatialised at the wall).
 
 const TRACKS = {
   soft: ['soft-1', 'soft-2', 'soft-3'],
   fast: ['fast-1', 'fast-2', 'fast-3'],
 };
 const MUSIC_GAIN = 0.8;
-const STREET_GAIN = 0.55;
 const MURMUR_GAIN = 0.45;
 const FADE = 1.2; // seconds (time constant of the crossfades)
 const MOOD_HOLD = 1.0; // a new mood must hold this long before the music changes
@@ -23,11 +21,12 @@ const url = (name) => `/audio/${name}.mp3`;
 export class AudioEngine {
   constructor() {
     this.ctx = null;
-    this.mood = 'street';
-    this.candidate = 'street';
+    this.mood = 'quiet';
+    this.candidate = 'quiet';
     this.candidateSince = 0;
     this.lastTrack = {};
     this.talking = false;
+    this.override = null; // spectator mode: a fixed soundtrack ('soft-2', 'off', …) instead of following the stage
   }
 
   init() {
@@ -52,9 +51,7 @@ export class AudioEngine {
     this.decks.forEach((d) => d.el.addEventListener('ended', () => this.onTrackEnded(d)));
     this.active = 0;
 
-    this.street = this.makeLoop(url('street'), this.master, true);
     this.murmur = this.makeLoop(url('murmur'), this.inst, true);
-    this.applyMood('street', true);
   }
 
   /** An <audio> element routed through a gain node. */
@@ -99,13 +96,13 @@ export class AudioEngine {
     return name;
   }
 
-  startTrack(mood) {
+  startTrack(mood, name = this.pickTrack(mood)) {
     const out = this.decks[this.active];
     this.active = 1 - this.active;
     const deck = this.decks[this.active];
     this.fadeTo(out, 0, () => this.stop(out));
     deck.mood = mood;
-    deck.el.src = url(this.pickTrack(mood));
+    deck.el.src = url(name);
     deck.el.currentTime = 0;
     deck.playing = false;
     this.play(deck);
@@ -114,20 +111,15 @@ export class AudioEngine {
 
   onTrackEnded(deck) {
     deck.playing = false;
-    if (deck === this.decks[this.active] && this.mood !== 'street') this.startTrack(this.mood);
+    if (deck !== this.decks[this.active]) return;
+    if (this.override && this.override !== 'off') this.startTrack('override', this.override);
+    else if (!this.override && this.mood !== 'quiet') this.startTrack(this.mood);
   }
 
-  applyMood(mood, instant = false) {
+  applyMood(mood) {
     this.mood = mood;
-    if (mood === 'street') {
-      for (const d of this.decks) this.fadeTo(d, 0, () => this.stop(d));
-      this.play(this.street);
-      this.fadeTo(this.street, STREET_GAIN);
-    } else {
-      this.fadeTo(this.street, 0, () => this.stop(this.street));
-      this.startTrack(mood);
-    }
-    if (instant) this.street.gain.gain.value = mood === 'street' ? STREET_GAIN : 0;
+    if (mood === 'quiet') for (const d of this.decks) this.fadeTo(d, 0, () => this.stop(d));
+    else this.startTrack(mood);
   }
 
   /**
@@ -135,13 +127,26 @@ export class AudioEngine {
    * onStage = people standing on the stage, seated = people on its benches,
    * talking = some avatars are chatting, dancing = some avatars are dancing.
    */
+  /** Spectator mode: play one soundtrack ('soft-1' … 'fast-3'), 'off' for silence, or null to follow the stage again. */
+  setOverride(track) {
+    this.override = track || null;
+    if (!this.ctx) return;
+    if (this.override === 'off') for (const d of this.decks) this.fadeTo(d, 0, () => this.stop(d));
+    else if (this.override) this.startTrack('override', this.override);
+    else this.applyMood(this.mood);
+  }
+
   setMood({ onStage, seated, talking, dancing }) {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    const want = dancing || onStage >= 3 ? 'fast' : onStage >= 1 || seated > 0 ? 'soft' : 'street';
+    if (this.override) { this.updateMurmur(talking); return; }
+    const want = dancing || onStage >= 3 ? 'fast' : onStage >= 1 || seated > 0 ? 'soft' : 'quiet';
     if (want !== this.candidate) { this.candidate = want; this.candidateSince = now; }
     if (want !== this.mood && now - this.candidateSince >= MOOD_HOLD) this.applyMood(want);
+    this.updateMurmur(talking);
+  }
 
+  updateMurmur(talking) {
     if (talking !== this.talking) {
       this.talking = talking;
       if (talking) this.play(this.murmur);

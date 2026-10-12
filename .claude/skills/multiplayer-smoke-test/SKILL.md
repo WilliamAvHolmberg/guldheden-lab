@@ -13,10 +13,10 @@ The room protocol (all JSON, see `party/server.js`):
 | `welcome` | server → client | `{ id, host, state: { theme, muted }, players[] }` |
 | `host` | server → all | id of the client that simulates NPCs (first in room; migrates on leave) |
 | `join` / `leave` | server → others | player metadata |
-| `p` | client → others | player snapshot `{ x, z, h, y, q[68], gs? }` (17 joint quaternions, `gs` = webcam guest) |
+| `p` | client → others | player snapshot `{ x, z, h, y, q[68], g?, gt?, gs? }` (17 joint quaternions, `g`/`gt` = gesture playing and its time, `gs` = webcam guest), or just `{ spec: 1 }` while in spectator mode |
 | `npcs` | host → others | `[{ id, n, k, s(seed), x, z, h, g, gt }]` at 8 Hz; non-hosts render puppets |
-| `state` | client → others | shared installation state (era `theme`, `muted`), stored on the server |
-| `cmd` | non-host → host | `add` / `group` / `clear` visitor requests |
+| `state` | client → others | shared installation state (era `theme`, `muted`, `time` of day), stored on the server |
+| `cmd` | non-host → host | `add` / `group` / `remove` / `clear` visitor requests |
 | `chat` | client → server → others | `{ text }` in, `{ id, name, text }` out; trimmed to 140 chars, 400 ms rate limit per connection |
 
 ## 1. Protocol test (fast, no browser)
@@ -26,7 +26,7 @@ npm run party &            # local: wrangler dev on :8787 (skip for prod)
 npm run smoke              # local
 npm run smoke:prod         # production workers.dev host
 ```
-Expect `All 10 checks passed`. Each run uses a fresh room `smoke-<timestamp>`, so it never disturbs real players.
+Expect `All 12 checks passed`. Each run uses a fresh room `smoke-<timestamp>`, so it never disturbs real players.
 
 ## 2. Browser + bot (end-to-end)
 

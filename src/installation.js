@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { Rig, HISTORICAL, animIdle, animWalk, animTalk, animGesture, BONES, JOINTS, M } from './character.js';
+import {
+  Rig, HISTORICAL, animIdle, animWalk, animTalk, animGesture, animAction, animCycle, GESTURE_ACTION, BONES, JOINTS, M,
+} from './character.js';
 import { FACTS } from './facts.js';
-import { LAYOUT, STAGE, toScreenLocal, screenToWorld, onStage, hipRoof } from './world.js';
+import { LAYOUT, STAGE, STAGE_GATES, STAGE_GATE_W, toScreenLocal, screenToWorld, onStage, hipRoof } from './world.js';
 import { hashStr } from './net.js';
 import { staticBatch } from './batch.js';
 import {
@@ -29,6 +31,46 @@ const SCREEN_W = SCREEN.z1 - SCREEN.z0;
 const SCREEN_H = SCREEN.y1 - SCREEN.y0;
 const SCREEN_C = new THREE.Vector3(SCREEN.x, (SCREEN.y0 + SCREEN.y1) / 2, (SCREEN.z0 + SCREEN.z1) / 2);
 const RT_W = 2048, RT_H = Math.round(2048 * SCREEN_H / SCREEN_W);
+
+// Player colours (feedback v4): a ring under each avatar on the screen, the bench / footprints
+// someone uses, and the circle round a dance all light up in that person's colour.
+export const PLAYER_COLORS = ['#ff4f6d', '#ffb703', '#2ec4b6', '#4d96ff', '#b46cff', '#7ad151', '#ff7f3f', '#f15bb5', '#00c2ff', '#e9d758'];
+
+// The painted footprint groups on the stage floor (installation-local x, z of each pair, read off
+// stageFloorTexture: 160 px per metre, canvas x → local z, canvas y → distance from the screen).
+//   talk spot: two pairs  – two people on it stay in conversation, nobody else can join them
+//   dance spot: three pairs – dancing starts when all three are taken
+const PX = 160;
+const fromCanvas = (cx, cy) => ({ x: STAGE.x1 - (cy + 6) / PX, z: STAGE.z0 + cx / PX });
+const TALK_X = 2048 * 0.27, DANCE_X = 2048 * 0.73, SPOT_Y = 1120 * 0.5;
+export const FOOT_SPOTS = [
+  { spot: 'talk', ...fromCanvas(TALK_X - 70, SPOT_Y) },
+  { spot: 'talk', ...fromCanvas(TALK_X + 70, SPOT_Y) },
+  { spot: 'dance', ...fromCanvas(DANCE_X - 120, SPOT_Y + 30) },
+  { spot: 'dance', ...fromCanvas(DANCE_X, SPOT_Y - 40) },
+  { spot: 'dance', ...fromCanvas(DANCE_X + 120, SPOT_Y + 30) },
+];
+const FOOT_R = 0.5;
+
+// bicycle loop on the screen for avatars whose person sits on a bench
+const BIKE = { rx: 3.4, rz: 0.9, cz: 1.2, speed: 0.45 }; // standing within this of a footprint pair counts as standing on it
+
+// Social meter (feedback v4): being on the stage counts a little, doing things together a lot.
+// Three people dancing fill it; then fireworks.
+const SOCIAL = { onStage: 1, talking: 2.5, dancing: 4.5, full: 13.5, charge: 0.12, drain: 0.05 };
+
+// The avatar asks itself what a gesture might do when its person has stood still for a while
+const NUDGE_AFTER = 7; // seconds without moving
+const NUDGE_FOR = 5;
+const NUDGES = [
+  'What will happen if I jump?', 'What will happen when I clap?', 'What happens if I wave?',
+  'What if I dance?', 'What if I spread my arms like a plane?', 'What happens if I take a bow?',
+];
+
+// fact bubbles over chatting avatars (feedback v4: stay longer, dim out slowly, bigger text)
+const FACT_TURN = 9; // seconds per fact
+const FACT_FADE_IN = 0.4;
+const FACT_DIM = 3; // the last seconds of a turn, the bubble slowly dims out
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -64,6 +106,11 @@ export class Installation {
     this.overlayDirty = true;
     this.overlayTimer = 0;
     this.filterActive = false;
+    this.social = 0; // social meter shown on the wall, 0..1
+    this.socialTarget = 0;
+    this.socialDrawn = -1;
+    this.fireworkCd = 0;
+    this.full = false;
 
     this.hw = new THREE.Group();
     scene.add(this.hw);
@@ -74,6 +121,7 @@ export class Installation {
     this.buildLights(obstacles);
     this.buildSensorViz();
     this.buildGuides();
+    this.buildFootGlows();
     // place the whole installation (built in its local frame) out on the square
     this.hw.position.set(LAYOUT.screen.cx, 0, LAYOUT.screen.cz);
     this.hw.rotation.y = LAYOUT.screen.rot;
@@ -119,6 +167,7 @@ export class Installation {
     this.buildStageLights();
     this.buildConfetti();
     this.buildParticles();
+    this.buildFireworks();
 
     // archive extras: historical passers-by walking in the background
     this.extras = [];
@@ -601,6 +650,134 @@ export class Installation {
     }
     this.buildStageFloor();
     this.buildBenches(obstacles);
+    this.buildFence(obstacles);
+  }
+
+  /**
+   * Ribbon fence round the stage (feedback v4): stanchion posts with a fabric belt, open where the
+   * light strips arrive (STAGE_GATES along the front) and at the back corner where the path from
+   * behind the screen comes in. The belts are obstacles, so people walk in through the openings.
+   */
+  buildFence(obstacles) {
+    const FX = STAGE.x0 - 0.35, FZ = STAGE.z1 + 0.35;
+    const runs = [];
+    // front edge, broken by the gates
+    const edges = [-FZ, ...STAGE_GATES.flatMap((g) => [g - STAGE_GATE_W / 2, g + STAGE_GATE_W / 2]), FZ];
+    for (let i = 0; i < edges.length; i += 2) runs.push([[FX, edges[i]], [FX, edges[i + 1]]]);
+    // sides, back to the truss towers; the left side leaves an opening at the front corner
+    runs.push([[FX + 1.35, -FZ], [STAGE.x1 - 0.2, -FZ]]);
+    runs.push([[FX, FZ], [STAGE.x1 - 0.2, FZ]]);
+    const postMat = M('#1d2024', 0.35, 0.7), capMat = M('#c9a24a', 0.3, 0.8), belt = M('#9b1d2a', 0.7);
+    const post = (x, z) => {
+      for (const [geo, mat, y] of [
+        [new THREE.CylinderGeometry(0.03, 0.03, 0.92, 10), postMat, 0.46],
+        [new THREE.CylinderGeometry(0.15, 0.16, 0.035, 20), postMat, 0.018],
+        [new THREE.SphereGeometry(0.045, 12, 8), capMat, 0.95],
+      ]) {
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x, y, z);
+        m.castShadow = true;
+        this.hw.add(m);
+      }
+    };
+    for (const [[x0, z0], [x1, z1]] of runs) {
+      const len = Math.hypot(x1 - x0, z1 - z0);
+      const n = Math.max(1, Math.ceil(len / 1.5));
+      for (let i = 0; i <= n; i++) post(x0 + ((x1 - x0) * i) / n, z0 + ((z1 - z0) * i) / n);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(x1 - x0) || 0.012, 0.055, Math.abs(z1 - z0) || 0.012), belt);
+      b.position.set((x0 + x1) / 2, 0.86, (z0 + z1) / 2);
+      b.castShadow = true;
+      this.hw.add(b);
+      this.addObstacle(obstacles, { t: 'box', x0: Math.min(x0, x1) - 0.06, x1: Math.max(x0, x1) + 0.06, z0: Math.min(z0, z1) - 0.06, z1: Math.max(z0, z1) + 0.06 });
+    }
+  }
+
+  /** Glow decals over the painted footprint pairs: lit in the colour of whoever stands on them. */
+  buildFootGlows() {
+    const c = makeCanvas(128, 128), ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = '#fff';
+    ctx.shadowBlur = 10;
+    // same shapes as the paint in stageFloorTexture (1 px = 1 canvas px there too: 128 px = 0.8 m)
+    const foot = (x, y, side) => {
+      ctx.beginPath(); ctx.ellipse(x, y - 18, 15, 27, side * 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x - side * 2, y + 25, 10, 12, 0, 0, Math.PI * 2); ctx.fill();
+    };
+    foot(40, 61, 1); foot(88, 55, -1);
+    const tex = toTexture(c, { wrap: false });
+    this.footGlows = FOOT_SPOTS.map((f) => {
+      const geo = new THREE.PlaneGeometry(0.8, 0.8);
+      geo.rotateX(-Math.PI / 2);
+      geo.rotateY(-Math.PI / 2); // canvas up → towards the screen, like the floor
+      const mat = new THREE.MeshBasicMaterial({ map: tex, color: '#000', transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(f.x, 0.026, f.z);
+      m.userData.dynamic = true;
+      m.renderOrder = 3;
+      this.hw.add(m);
+      return { ...f, mesh: m, occupant: null, level: 0 };
+    });
+  }
+
+  buildFireworks() {
+    this.fireworks = [];
+    const tex = sparkleTexture();
+    for (let k = 0; k < 6; k++) {
+      const n = 180;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+      g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+      // normal blending: added light would vanish against the white 1944 facades in daylight
+      const pts = new THREE.Points(g, new THREE.PointsMaterial({
+        size: 0.6, map: tex, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, alphaTest: 0.05,
+      }));
+      pts.visible = false;
+      pts.frustumCulled = false;
+      this.archive.add(pts);
+      this.fireworks.push({ pts, vel: new Float32Array(n * 3), life: 0, max: 1 });
+    }
+  }
+
+  /** One burst of fireworks in the sky of the 1944 square, in the colours of the people on stage. */
+  launchFirework() {
+    const fw = this.fireworks.find((f) => f.life <= 0);
+    if (!fw) return;
+    const cols = [...this.tracked.values()].filter((tr) => !tr.leaving).map((tr) => tr.color);
+    if (!cols.length) cols.push(new THREE.Color('#ffd27a'));
+    const pos = fw.pts.geometry.attributes.position, col = fw.pts.geometry.attributes.color;
+    // low enough to burst inside the wall camera's view, in front of the 1944 facades
+    const cx = (this.rand() - 0.5) * 16, cy = 4.0 + this.rand() * 1.2, cz = -7 - this.rand() * 3;
+    const c0 = cols[Math.floor(this.rand() * cols.length)], c1 = cols[Math.floor(this.rand() * cols.length)];
+    for (let i = 0; i < pos.count; i++) {
+      pos.setXYZ(i, cx, cy, cz);
+      // points spread evenly on a sphere
+      const u = (i + 0.5) / pos.count, th = Math.acos(1 - 2 * u), ph = i * 2.39996;
+      const sp = 4.2 + this.rand() * 0.6;
+      fw.vel.set([Math.sin(th) * Math.cos(ph) * sp, Math.cos(th) * sp, Math.sin(th) * Math.sin(ph) * sp * 0.6], i * 3);
+      const c = i % 2 ? c0 : c1;
+      col.setXYZ(i, c.r, c.g, c.b);
+    }
+    pos.needsUpdate = col.needsUpdate = true;
+    fw.life = fw.max = 1.8;
+    fw.pts.visible = true;
+  }
+
+  updateFireworks(dt) {
+    for (const fw of this.fireworks) {
+      if (fw.life <= 0) continue;
+      fw.life -= dt;
+      const pos = fw.pts.geometry.attributes.position;
+      const drag = Math.exp(-dt * 2.2);
+      for (let i = 0; i < pos.count; i++) {
+        fw.vel[i * 3] *= drag; fw.vel[i * 3 + 1] = fw.vel[i * 3 + 1] * drag - 2.2 * dt; fw.vel[i * 3 + 2] *= drag;
+        pos.setXYZ(i, pos.getX(i) + fw.vel[i * 3] * dt, pos.getY(i) + fw.vel[i * 3 + 1] * dt, pos.getZ(i) + fw.vel[i * 3 + 2] * dt);
+      }
+      pos.needsUpdate = true;
+      const a = clamp(fw.life / fw.max, 0, 1);
+      fw.pts.material.opacity = Math.min(1, a * 1.6);
+      fw.pts.material.size = 0.6 * (0.55 + 0.45 * a);
+      if (fw.life <= 0) fw.pts.visible = false;
+    }
   }
 
   /** Flush wooden stage floor (no step up) with "STEP IN" and the footprint groups painted on it. */
@@ -659,13 +836,23 @@ export class Installation {
       }
       const benchIndex = this.benchCount = (this.benchCount ?? 0) + 1;
       for (const sx of [-0.45, 0.45]) {
+        // LED strip under the seat's front edge + a soft pool of light below: lit in the sitter's colour
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.02, 0.03), new THREE.MeshBasicMaterial({ color: '#000', toneMapped: false }));
+        strip.position.set(sx, 0.41, 0.1);
+        const pad = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.9), new THREE.MeshBasicMaterial({
+          map: this.glowTex ??= glowTexture(), color: '#000', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+        }));
+        pad.rotation.x = -Math.PI / 2;
+        pad.position.set(sx, 0.03, 0.15);
+        strip.userData.dynamic = pad.userData.dynamic = true;
+        g.add(strip, pad);
         const seat = new THREE.Object3D();
         seat.position.set(sx, 0, -0.02);
         g.add(seat);
         const front = new THREE.Object3D();
         front.position.set(sx, 0, 0.85);
         g.add(front);
-        this.seatAnchors.push({ seat, front, group: g, bench: benchIndex });
+        this.seatAnchors.push({ seat, front, group: g, bench: benchIndex, glow: [strip, pad] });
         const lp = new THREE.Vector3(sx, 0, -0.05).applyAxisAngle(new THREE.Vector3(0, 1, 0), g.rotation.y).add(g.position);
         this.addObstacle(obstacles, { t: 'circle', x: lp.x, z: lp.z, r: 0.42 });
       }
@@ -685,7 +872,7 @@ export class Installation {
       const pos = a.seat.getWorldPosition(new THREE.Vector3());
       const front = a.front.getWorldPosition(v).clone();
       const heading = Math.atan2(front.x - pos.x, front.z - pos.z);
-      return { pos, front, heading, occupant: null, bench: a.bench };
+      return { pos, front, heading, occupant: null, bench: a.bench, glow: a.glow, glowLevel: 0, side: a.seat.position.x > 0 ? 1 : 0 };
     });
   }
 
@@ -709,6 +896,7 @@ export class Installation {
       clamp.position.copy(base).add(_v.set(0, 0.2, 0));
       this.hw.add(clamp);
       const head = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.28, 16), M('#16181b', 0.4, 0.6));
+      head.userData.dynamic = true; // pans slowly with its beam
       head.position.copy(base);
       head.lookAt(target);
       head.rotateX(Math.PI / 2);
@@ -723,7 +911,7 @@ export class Installation {
       const L = base.distanceTo(target), r = Math.tan(0.24) * L;
       beam.scale.set(r, r, L);
       this.hw.add(beam);
-      this.spots.push({ light, beam, head, base, i });
+      this.spots.push({ light, beam, head, base, aim: target.clone(), i });
     });
 
     // installation masts + festoon string lights from the truss out over the audience
@@ -988,6 +1176,9 @@ export class Installation {
         tr.tag.material.map.dispose();
         tr.tag.removeFromParent();
         tr.filterIcon.removeFromParent();
+        for (const r of [tr.ring, tr.worldRing]) { r.removeFromParent(); r.geometry.dispose(); r.material.dispose(); }
+        this.clearNudge(tr);
+        this.dropBike(tr);
         this.tracked.delete(id);
       }
     }
@@ -1013,10 +1204,13 @@ export class Installation {
     // --- chat & dance groups ---
     this.updateGroups(active, t);
     this.updateBubbles(t);
+    this.updateSocial(dt, t, active);
+    this.updateGlows(dt);
 
     // --- avatars ---
     this.filterActive = false;
     for (const tr of this.tracked.values()) this.updateAvatar(tr, dt, t);
+    this.updateDanceCircles(t);
 
     this.updateExtras(dt, t);
     this.updateFx(dt, t);
@@ -1026,7 +1220,7 @@ export class Installation {
     // --- overlay ---
     this.overlayTimer -= dt;
     if (this.toast && t > this.toast.until) { this.toast = null; this.overlayDirty = true; }
-    if (this.overlayDirty && this.overlayTimer <= 0) { this.drawOverlay(); this.overlayDirty = false; this.overlayTimer = 0.2; }
+    if (this.overlayDirty && this.overlayTimer <= 0) { this.drawOverlay(); this.overlayDirty = false; this.overlayTimer = 0.12; }
 
     // --- screen shader ---
     const e = this.energy;
@@ -1067,11 +1261,27 @@ export class Installation {
     const filterIcon = makeFilterIcon();
     filterIcon.visible = false;
     this.archive.add(filterIcon);
+    // the person's colour (same on every client: picked from the id, skipping colours already on stage)
+    const usedCols = new Set([...this.tracked.values()].filter((tr) => !tr.leaving).map((tr) => tr.colorIdx));
+    let colorIdx = hashStr(p.id) % PLAYER_COLORS.length;
+    for (let k = 0; k < PLAYER_COLORS.length && usedCols.has(colorIdx); k++) colorIdx = (colorIdx + 1) % PLAYER_COLORS.length;
+    const color = new THREE.Color(PLAYER_COLORS[colorIdx]);
+    this.ringTex ??= ringTexture([new THREE.Color('#fff')]);
+    const ring = groundRing(1.15, this.ringTex, color); // under the avatar on the screen
+    ring.position.copy(stage).setY(0.02);
+    this.archive.add(ring);
+    const worldRing = groundRing(1.0, this.ringTex, color); // under the person on the real square
+    worldRing.position.copy(p.pos).setY(0.045);
+    this.scene.add(worldRing);
     this.emit('sparkle', stage.clone().add(_v.set(0, 1.0, 0)), 14, 1.0, 1.2);
     this.onEvent(`${p.name} detected → becomes "${style.name}" – ${style.en}`, 'track');
     return {
       id: p.id, person: p, style, rig, born: this.time, lastSeen: this.time, leaving: false,
       stage, yaw: 0, tag, filterIcon, filterT: 0, filtered: false, filterLogged: false, group: null, seat: null,
+      color, colorIdx, ring, worldRing,
+      action: null, lastG: null, lastGT: 0, // the avatar's own answer to a gesture
+      motion: 0, idleT: 0, nudge: null, nudgeCount: 0, prevHands: null, // nudge when standing still
+      bike: null, bikeAng: 0, pedal: 0, // riding a bicycle while its person sits on a bench
     };
   }
 
@@ -1090,24 +1300,49 @@ export class Installation {
   }
 
   /**
-   * Interaction rules (feedback v2):
-   *   two people close together (or on the same bench) → their avatars chat, with fact bubbles
-   *   three or more close together                    → their avatars dance together
-   * Groups are connected components of "close to each other"; they last as long as people stay close.
+   * Interaction rules (feedback v2, v4):
+   *   anywhere on the stage, two people close together → their avatars chat, with fact bubbles
+   *   three or more close together                     → their avatars dance together
+   *   the two-footprint marker is a locked talk spot: two people on it stay in conversation, and
+   *     nobody standing next to it can pull them into a dance (they are not linked to anyone else)
+   *   the three-footprint marker is a dance spot: when all three pairs are taken, those three dance
+   *   sitting on a bench → the avatar rides a bicycle instead (not part of any group)
+   * Groups are connected components of "together"; they last as long as people stay.
    */
   updateGroups(active, t) {
     const PROX = 1.6;
-    const parent = active.map((_, i) => i);
+    const standing = active.filter((tr) => !tr.seat);
+    const local = new Map(standing.map((tr) => [tr, toScreenLocal(tr.person.pos, new THREE.Vector3())]));
+    // who stands on which footprint pair (each pair takes the nearest person on it)
+    const taken = new Set();
+    for (const f of this.footGlows) {
+      f.occupant = null;
+      let bd = FOOT_R;
+      for (const tr of standing) {
+        if (taken.has(tr)) continue;
+        const l = local.get(tr);
+        const d = Math.hypot(l.x - f.x, l.z - f.z);
+        if (d < bd) { bd = d; f.occupant = tr; }
+      }
+      if (f.occupant) taken.add(f.occupant);
+    }
+    const onSpot = (spot) => this.footGlows.filter((f) => f.spot === spot && f.occupant).map((f) => f.occupant);
+    const talkSpot = onSpot('talk'), danceSpot = onSpot('dance');
+    const locked = new Set(talkSpot.length === 2 ? talkSpot : []);
+    const danceTrio = danceSpot.length === 3 ? new Set(danceSpot) : null;
+
+    const parent = standing.map((_, i) => i);
     const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-    for (let i = 0; i < active.length; i++) for (let j = i + 1; j < active.length; j++) {
-      const a = active[i], b = active[j];
-      const together = a.seat || b.seat
-        ? !!(a.seat && b.seat && a.seat.bench === b.seat.bench)
-        : Math.hypot(a.person.pos.x - b.person.pos.x, a.person.pos.z - b.person.pos.z) <= PROX;
+    for (let i = 0; i < standing.length; i++) for (let j = i + 1; j < standing.length; j++) {
+      const a = standing[i], b = standing[j];
+      let together;
+      if (locked.has(a) || locked.has(b)) together = locked.has(a) && locked.has(b);
+      else if (danceTrio?.has(a) && danceTrio.has(b)) together = true;
+      else together = Math.hypot(a.person.pos.x - b.person.pos.x, a.person.pos.z - b.person.pos.z) <= PROX;
       if (together) parent[find(i)] = find(j);
     }
     const comps = new Map();
-    active.forEach((tr, i) => {
+    standing.forEach((tr, i) => {
       const r = find(i);
       if (!comps.has(r)) comps.set(r, []);
       comps.get(r).push(tr);
@@ -1121,19 +1356,27 @@ export class Installation {
       const old = this.groups.get(key);
       const g = old && old.type === type ? old : { key, type, t0: t, turn: -1, nextTurn: t + 0.4, factIdx: hashStr(key) % FACTS.length };
       g.members = members;
+      g.locked = members.every((m) => locked.has(m));
       next.set(key, g);
       if (g !== old) {
         const names = members.map((m) => m.style.name).join(', ');
         if (type === 'talk') {
           this.showToast('Neighbours chatting – listen to their stories!');
-          this.onEvent(`Chat: ${names}`, 'duo');
+          this.onEvent(`Chat${g.locked ? ' (talk spot)' : ''}: ${names}`, 'duo');
         } else {
           this.showToast('Three or more together – time to dance!');
           this.onEvent(`Dance: ${names}`, 'duo');
+          // the circle round the dancers, in all their colours
+          g.circle = groundRing(1, ringTexture(members.map((m) => m.color)));
+          this.archive.add(g.circle);
         }
       }
     }
-    for (const [key, g] of this.groups) if (!next.has(key) && g.bubble) { g.bubble.material.map.dispose(); g.bubble.removeFromParent(); }
+    for (const [key, g] of this.groups) {
+      if (next.get(key) === g) continue;
+      if (g.bubble) { g.bubble.material.map.dispose(); g.bubble.removeFromParent(); }
+      if (g.circle) { g.circle.material.map.dispose(); g.circle.removeFromParent(); }
+    }
     for (const tr of this.tracked.values()) tr.group = null;
     for (const g of next.values()) for (const m of g.members) m.group = g;
     this.groups = next;
@@ -1143,6 +1386,53 @@ export class Installation {
     this.dancing = [...next.values()].some((g) => g.type === 'dance');
   }
 
+  /** Social meter: charges while people are on the stage, much faster when they do things together. */
+  updateSocial(dt, t, active) {
+    let score = 0;
+    for (const tr of active) {
+      score += SOCIAL.onStage;
+      if (tr.group?.type === 'talk') score += SOCIAL.talking;
+      else if (tr.group?.type === 'dance') score += SOCIAL.dancing;
+    }
+    this.socialTarget = Math.min(1, score / SOCIAL.full);
+    const d = this.socialTarget - this.social;
+    this.social += Math.sign(d) * Math.min(Math.abs(d), (d > 0 ? SOCIAL.charge : SOCIAL.drain) * dt);
+    const full = this.social >= 0.999;
+    if (full && !this.full) {
+      this.showToast('The square is buzzing – fireworks!');
+      this.onEvent('Social meter full → fireworks', 'level');
+      for (let k = 0; k < 3; k++) this.launchFirework();
+      this.fireworkCd = 1.1;
+    }
+    this.full = full;
+    if (full && (this.fireworkCd -= dt) <= 0) { this.launchFirework(); this.fireworkCd = 0.7 + this.rand() * 0.8; }
+    if (Math.abs(this.social - this.socialDrawn) > 0.004 || full) this.overlayDirty = true;
+  }
+
+  /** Footprints and benches light up in the colour of whoever uses them. */
+  updateGlows(dt) {
+    const k = 1 - Math.exp(-dt * 6);
+    for (const f of this.footGlows) {
+      const on = f.occupant && !f.occupant.leaving ? 1 : 0;
+      if (on) f.color = f.occupant.color;
+      f.level += (on - f.level) * k;
+      f.mesh.visible = f.level > 0.01;
+      if (f.color) f.mesh.material.color.copy(f.color).multiplyScalar(1.6);
+      f.mesh.material.opacity = f.level;
+    }
+    const sitters = new Map();
+    for (const tr of this.tracked.values()) if (tr.seat && !tr.leaving) sitters.set(tr.seat, tr);
+    for (const seat of this.seats) {
+      const tr = sitters.get(seat);
+      if (tr) seat.glowColor = tr.color;
+      seat.glowLevel += ((tr ? 1 : 0) - seat.glowLevel) * k;
+      const [strip, pad] = seat.glow;
+      strip.material.color.copy(seat.glowColor ?? _c.set('#000')).multiplyScalar(1.8 * seat.glowLevel);
+      pad.material.color.copy(seat.glowColor ?? _c.set('#000')).multiplyScalar(0.9 * seat.glowLevel);
+      strip.visible = pad.visible = seat.glowLevel > 0.01;
+    }
+  }
+
   /** Fact bubbles over chatting avatars: the two take turns, a new fact every few seconds. */
   updateBubbles(t) {
     for (const g of this.groups.values()) {
@@ -1150,7 +1440,7 @@ export class Installation {
       if (t >= g.nextTurn) {
         g.turn++;
         g.factIdx = (g.factIdx + (g.turn > 0 ? 1 : 0)) % FACTS.length;
-        g.nextTurn = t + 6;
+        g.nextTurn = t + FACT_TURN;
         if (g.bubble) { g.bubble.material.map.dispose(); g.bubble.removeFromParent(); }
         g.bubble = factBubble(FACTS[g.factIdx]);
         this.archive.add(g.bubble);
@@ -1159,8 +1449,10 @@ export class Installation {
       if (!speaker) continue;
       const sc = speaker.rig.style.scale ?? 1;
       g.bubble.position.copy(speaker.stage).add(_v.set(-Math.sign(speaker.stage.x) * 0.5, 1.95 * sc, 0.3));
-      const fadeIn = Math.min(1, (t - (g.nextTurn - 6)) / 0.3);
-      g.bubble.material.opacity = fadeIn;
+      const age = t - (g.nextTurn - FACT_TURN);
+      const fadeIn = Math.min(1, age / FACT_FADE_IN);
+      const dim = 1 - smooth(FACT_TURN - FACT_DIM, FACT_TURN, age);
+      g.bubble.material.opacity = fadeIn * (0.12 + 0.88 * dim);
     }
   }
 
@@ -1172,37 +1464,58 @@ export class Installation {
     const s = tr.leaving ? Math.max(0.001, 1 - (t - tr.leaveT) / 0.5) : Math.min(1, age / 0.5);
     rig.root.scale.setScalar(Math.max(0.001, s));
 
+    // the avatar answers a gesture with its own, bigger action, and plays it to the end before the next
+    const pg = p.gesture ?? null, pgt = p.gestureT ?? 0;
+    if (pg && (pg !== tr.lastG || pgt + 0.15 < tr.lastGT) && !tr.action && !tr.seat && !tr.leaving && GESTURE_ACTION[pg]) {
+      tr.action = { name: GESTURE_ACTION[pg], t: 0 };
+      this.clearNudge(tr);
+      this.onEvent(`${p.name}: ${pg} → ${tr.style.name} answers with "${tr.action.name}"`, 'duo');
+    }
+    tr.lastG = pg;
+    tr.lastGT = pgt;
+
     let target = this.stagePos(p);
     let yawTarget = Math.PI / 2 - (p.heading - LAYOUT.screen.rot);
     const g = tr.group;
     const idx = g ? g.members.indexOf(tr) : 0;
-    if (g) {
-      const mid = new THREE.Vector3();
-      for (const m of g.members) mid.add(this.stagePos(m.person));
-      mid.multiplyScalar(1 / g.members.length);
-      if (g.type === 'talk') {
-        // stand side by side, turned towards each other
-        target = mid.add(_v.set(idx === 0 ? -0.5 : 0.5, 0, 0));
-        yawTarget = (idx === 0 ? 1 : -1) * Math.PI / 2 * 0.7;
-      } else {
-        // dance in a slowly turning ring, mostly facing the audience
-        const n = g.members.length, r = 0.45 + 0.17 * n;
-        const ang = (t - g.t0) * 0.7 + (idx / n) * Math.PI * 2;
-        target = mid.add(_v.set(Math.sin(ang) * r, 0, Math.cos(ang) * r * 0.55));
-        yawTarget = Math.sin(ang) * 0.5;
-        if (Math.floor((t + idx * 0.13) * 2) !== Math.floor((t + idx * 0.13 - dt) * 2)) {
-          this.emit(idx % 2 ? 'heart' : 'sparkle', tr.stage.clone().add(_v.set(0, 1.2 + this.rand(), 0)), 2, 0.9, 0.9);
+    if (tr.seat && !tr.leaving) {
+      // sitting on a bench → the avatar rides a bicycle round the square until its person gets up
+      if (!tr.bike) {
+        tr.bike = bicycle(tr.color);
+        tr.bike.scale.setScalar(rig.style.scale ?? 1);
+        this.archive.add(tr.bike);
+        tr.bikeAng = Math.atan2((tr.stage.z - BIKE.cz) / BIKE.rz, tr.stage.x / BIKE.rx) + tr.seat.side * 0.5;
+      }
+      tr.bikeAng += dt * BIKE.speed;
+      const a = tr.bikeAng;
+      target = new THREE.Vector3(Math.cos(a) * BIKE.rx, 0, BIKE.cz + Math.sin(a) * BIKE.rz);
+      yawTarget = Math.atan2(-BIKE.rx * Math.sin(a), BIKE.rz * Math.cos(a));
+    } else {
+      this.dropBike(tr);
+      if (g) {
+        const mid = new THREE.Vector3();
+        for (const m of g.members) mid.add(this.stagePos(m.person));
+        mid.multiplyScalar(1 / g.members.length);
+        if (g.type === 'talk') {
+          // stand side by side, turned towards each other
+          target = mid.add(_v.set(idx === 0 ? -0.5 : 0.5, 0, 0));
+          yawTarget = (idx === 0 ? 1 : -1) * Math.PI / 2 * 0.7;
+        } else {
+          // dance in a slowly turning ring, mostly facing the audience
+          const n = g.members.length, r = 0.45 + 0.17 * n;
+          const ang = (t - g.t0) * 0.7 + (idx / n) * Math.PI * 2;
+          target = mid.add(_v.set(Math.sin(ang) * r, 0, Math.cos(ang) * r * 0.55));
+          yawTarget = Math.sin(ang) * 0.5;
+          if (Math.floor((t + idx * 0.13) * 2) !== Math.floor((t + idx * 0.13 - dt) * 2)) {
+            this.emit(idx % 2 ? 'heart' : 'sparkle', tr.stage.clone().add(_v.set(0, 1.2 + this.rand(), 0)), 2, 0.9, 0.9);
+          }
         }
       }
-    } else if (tr.seat) {
-      yawTarget = 0; // sitting on a bench → the avatar stands, facing out of the screen
     }
     tr.stage.lerp(target, 1 - Math.exp(-dt * 6));
-    rig.root.position.copy(tr.stage);
     let dy = yawTarget - tr.yaw;
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
     tr.yaw += dy * (1 - Math.exp(-dt * 8));
-    rig.root.rotation.y = tr.yaw;
 
     // --- content filter: hand-to-mouth (e.g. smoking) is not mirrored ---
     const head = p.rig.worldPos('head', _v);
@@ -1222,7 +1535,22 @@ export class Installation {
     if (tr.filtered) this.filterActive = true;
 
     // --- pose ---
-    if (g && g.type === 'talk') {
+    let root = null;
+    if (tr.action) {
+      tr.action.t += dt;
+      rig.resetTargets();
+      animIdle(rig, t, idx);
+      root = animAction(rig, tr.action.name, tr.action.t);
+      if (!root) tr.action = null;
+    }
+    if (root) {
+      // playing its own action
+    } else if (tr.bike) {
+      rig.resetTargets();
+      animIdle(rig, t, 0);
+      tr.pedal += dt * BIKE.speed * 9;
+      animCycle(rig, tr.pedal);
+    } else if (g && g.type === 'talk') {
       rig.resetTargets();
       animIdle(rig, t, idx);
       animTalk(rig, t, g.members[g.turn % g.members.length] === tr, idx * 1.7);
@@ -1232,11 +1560,6 @@ export class Installation {
       animGesture(rig, idx % 3 === 2 ? 'cheer' : 'dance', 0.5 + ((t - g.t0 + idx * 0.7) % 2.856)); // 2.856 s = two whole dance cycles, so the loop is seamless
     } else {
       rig.copyPoseFrom(p.rig, true);
-      if (tr.seat) {
-        // sitting on a bench: the avatar stands, but still mirrors arms, head and upper body
-        for (const j of ['thighL', 'shinL', 'footL', 'thighR', 'shinR', 'footR']) rig.target[j].identity();
-        rig.offsetTarget.set(0, 0, 0);
-      }
       if (tr.filtered) {
         // mirrored: the person's right hand is the avatar's left
         const side = rightHand ? 'L' : 'R';
@@ -1247,13 +1570,94 @@ export class Installation {
     }
     rig.update(dt, age < 0.05 ? 1000 : 22);
 
+    // --- place the figure (actions may lift, flip or fly it) ---
+    let yaw = tr.yaw;
+    if (root) {
+      yaw += root.yawAdd ?? 0;
+      if (root.yaw !== undefined) {
+        let d = root.yaw - yaw;
+        d = Math.atan2(Math.sin(d), Math.cos(d));
+        yaw += d * (root.yawBlend ?? 1);
+      }
+    }
+    const fwd = root?.fwd ?? 0;
+    const ox = root?.x ?? 0, oz = root?.z ?? 0;
+    rig.root.position.set(tr.stage.x + ox + Math.sin(yaw) * fwd, root?.y ?? 0, tr.stage.z + oz + Math.cos(yaw) * fwd);
+    rig.root.rotation.set(root?.pitch ?? 0, yaw, root?.roll ?? 0, 'YXZ');
+    if (tr.bike) {
+      // the saddle sits under the rider's hips
+      tr.bike.position.set(tr.stage.x + Math.sin(yaw) * 0.18 * s, 0, tr.stage.z + Math.cos(yaw) * 0.18 * s);
+      tr.bike.rotation.y = yaw;
+      tr.bike.scale.setScalar((rig.style.scale ?? 1) * Math.max(0.001, s));
+      for (const w of tr.bike.userData.wheels) w.rotation.x += dt * BIKE.speed * 3.2 / 0.34;
+    }
+
+    // --- nudge: a person who stands still gets a thought bubble ("What will happen if I jump?") ---
+    const hl = p.rig.worldPos('handL', _v), hr = p.rig.worldPos('handR', _v2);
+    if (tr.prevHands) {
+      const [pl, pr, pp] = tr.prevHands;
+      const m = (hl.distanceTo(pl) + hr.distanceTo(pr) + p.pos.distanceTo(pp)) / Math.max(dt, 1e-3);
+      tr.motion += (m - tr.motion) * (1 - Math.exp(-dt * 3));
+      pl.copy(hl); pr.copy(hr); pp.copy(p.pos);
+    } else tr.prevHands = [hl.clone(), hr.clone(), p.pos.clone()];
+    const still = tr.motion < 0.25 && !g && !tr.seat && !tr.action && !tr.leaving;
+    tr.idleT = still ? tr.idleT + dt : 0;
+    if (!still) this.clearNudge(tr);
+    else if (tr.idleT > NUDGE_AFTER && !tr.nudge) {
+      tr.nudge = { bubble: factBubble(NUDGES[(hashStr(p.id) + tr.nudgeCount++) % NUDGES.length], { worldW: 3.5, thought: true }), age: 0 };
+      this.archive.add(tr.nudge.bubble);
+    }
+    if (tr.nudge) {
+      tr.nudge.age += dt;
+      const sc = rig.style.scale ?? 1;
+      tr.nudge.bubble.position.copy(tr.stage).add(_v.set(0, 2.0 * sc, 0.3));
+      tr.nudge.bubble.material.opacity = Math.min(1, tr.nudge.age / 0.4) * (1 - smooth(NUDGE_FOR - 1, NUDGE_FOR, tr.nudge.age));
+      if (tr.nudge.age > NUDGE_FOR) { this.clearNudge(tr); tr.idleT = -6; } // ask again after a while
+    }
+
+    // colour rings: under the avatar on the screen, and under the person on the square
+    tr.ring.position.set(tr.stage.x + ox, 0.02, tr.stage.z + oz);
+    tr.ring.scale.setScalar(rig.style.scale ?? 1);
+    tr.ring.material.opacity = s * (root?.y > 0.5 ? 0.55 : 0.95);
+    tr.worldRing.position.set(p.pos.x, 0.045, p.pos.z);
+    tr.worldRing.material.opacity = s * 0.9;
+
     // name tag & filter icon
     const sc = rig.style.scale ?? 1;
     tr.tag.position.copy(tr.stage).add(_v.set(0, 2.25 * sc, 0.2));
-    tr.tag.material.opacity = (g?.type === 'talk' ? 0 : clamp(1 - (age - 5) / 1.5, 0, 1)) * s;
+    tr.tag.material.opacity = (g?.type === 'talk' || tr.nudge ? 0 : clamp(1 - (age - 5) / 1.5, 0, 1)) * s;
     tr.tag.visible = tr.tag.material.opacity > 0.01;
     tr.filterIcon.visible = tr.filtered;
     tr.filterIcon.position.copy(tr.stage).add(_v.set(0.45, 1.75 * sc, 0.3));
+  }
+
+  clearNudge(tr) {
+    if (!tr.nudge) return;
+    tr.nudge.bubble.material.map.dispose();
+    tr.nudge.bubble.removeFromParent();
+    tr.nudge = null;
+  }
+
+  dropBike(tr) {
+    if (!tr.bike) return;
+    tr.bike.removeFromParent();
+    tr.bike.traverse((o) => o.geometry?.dispose());
+    tr.bike = null;
+  }
+
+  /** The circle in all the dancers' colours, turning slowly round each dance. */
+  updateDanceCircles(t) {
+    for (const g of this.groups.values()) {
+      if (!g.circle) continue;
+      const mid = _v.set(0, 0, 0);
+      for (const m of g.members) mid.add(m.stage);
+      mid.multiplyScalar(1 / g.members.length);
+      const r = 0.45 + 0.17 * g.members.length;
+      g.circle.position.set(mid.x, 0.018, mid.z);
+      g.circle.scale.set((r + 0.75) * 2, 1, (r + 0.75) * 2 * 0.62);
+      g.circle.rotation.y = 0;
+      g.circle.material.opacity = 0.9 * smooth(0, 0.6, t - g.t0);
+    }
   }
 
   updateExtras(dt, t) {
@@ -1330,8 +1734,9 @@ export class Installation {
     this.stageBulbs.material.color.setScalar(0.4 + l * 2.2 * (0.85 + 0.15 * Math.sin(t * 6)));
     // stage spot cones
     const sc = this.spotLevel;
-    this.stageCones.forEach((c) => {
+    this.stageCones.forEach((c, i) => {
       c.visible = sc > 0.01;
+      if (c.visible) c.lookAt((i - 1) * 3.5 + Math.sin(t * 0.21 + i * 2) * 2.2, 0, 1.5 + Math.cos(t * 0.16 + i) * 1.2); // slow pan
       c.material.uniforms.intensity.value = sc * 0.35;
       c.material.uniforms.color.value.set('#ffe2b0'); // warm, vintage
     });
@@ -1365,6 +1770,7 @@ export class Installation {
     this.archiveCam.position.z = 9.5 - e * 0.25;
     this.archiveCam.position.x = Math.sin(t * 0.07) * (this.count === 0 ? 1.2 : 0.2);
     this.updateCars(dt);
+    this.updateFireworks(dt);
     this.archiveCam.lookAt(this.archiveCam.position.x * 0.5, 2.0, -1);
   }
 
@@ -1379,10 +1785,21 @@ export class Installation {
       const on = this.count > 0 ? Math.sin(t * 8 + i) > -0.2 : Math.sin(t * 1.5 + i) > 0.9;
       led.material.color.set(on ? (this.count > 0 ? '#ff2a2a' : '#661010') : '#200505');
     });
-    // vintage spotlights on the stage when 3+ people stand on it
+    // vintage spotlights on the stage when 3+ people stand on it; they pan slowly over the stage
     const sp = this.spotLevel;
     const fest = e > 3.5;
     this.spots.forEach((s) => {
+      if (sp > 0.01) {
+        const k = s.i * 1.7;
+        const aim = _v.copy(s.aim).add(_v2.set(Math.cos(t * 0.17 + k) * 0.9, 0, Math.sin(t * 0.23 + k) * 1.4));
+        aim.z = clamp(aim.z, STAGE.z0 + 0.5, STAGE.z1 - 0.5);
+        s.light.target.position.copy(aim);
+        s.light.target.updateMatrixWorld();
+        const w = this.hw.localToWorld(aim);
+        s.beam.lookAt(w);
+        s.head.lookAt(w);
+        s.head.rotateX(Math.PI / 2);
+      }
       const col = _c.set('#ffd9a0');
       s.light.color.copy(col);
       s.light.intensity = sp * (60 + night * 140);
@@ -1390,10 +1807,10 @@ export class Installation {
       s.beam.material.uniforms.color.value.copy(col);
       s.beam.material.uniforms.intensity.value = sp * (0.06 + night * 0.3);
     });
-    // guide strips in the paving: a quiet warm glow, a little brighter at night
+    // guide strips in the paving: only lit when it is dark (feedback v4) – off by day, dim at dusk
     this.guidePhase += dt * 0.3; // bands move ~1.2 m/s
     this.guideMat.uniforms.phase.value = this.guidePhase;
-    this.guideMat.uniforms.intensity.value = 1.5 + night * 0.6;
+    this.guideMat.uniforms.intensity.value = smooth(0.2, 1, night) * 2.1;
     // festoon lights
     const f = smooth(2.2, 3.0, e);
     const bright = 0.35 + f * (1.4 + night * 2.2);
@@ -1472,6 +1889,7 @@ export class Installation {
     // the header steps aside while avatars chat, so their fact bubbles are always readable
     if (!this.talking) this.drawOverlayHeader(ctx, W, th);
     this.drawOverlayBody(ctx, W, H);
+    this.drawSocialMeter(ctx, W, H);
     this.overlayTex.needsUpdate = true;
   }
 
@@ -1485,22 +1903,41 @@ export class Installation {
     ctx.font = 'italic 24px Georgia, serif';
     ctx.fillStyle = '#d8c8a4';
     ctx.fillText(th.sub, 60, 106);
-    // level meter
-    const x0 = W - 420;
-    ctx.fillStyle = 'rgba(12,10,8,0.55)';
-    ctx.fillRect(x0 - 20, 30, 400, 92);
-    for (let i = 1; i <= 4; i++) {
-      ctx.beginPath();
-      ctx.arc(x0 + 20 + (i - 1) * 40, 66, 13, 0, Math.PI * 2);
-      ctx.fillStyle = i <= this.level ? ['#f1c453', '#f4a261', '#e76f51', '#ff4f7a'][i - 1] : 'rgba(255,255,255,0.18)';
-      ctx.fill();
-    }
+  }
+
+  /** The social meter on the right edge of the wall: empty with nobody there, fireworks when full. */
+  drawSocialMeter(ctx, W, H) {
+    this.socialDrawn = this.social;
+    const v = this.social, full = this.full;
+    const bw = 44, x = W - 40 - bw, y0 = 74, y1 = H - 64;
+    ctx.fillStyle = 'rgba(12,10,8,0.6)';
+    ctx.beginPath(); ctx.roundRect(x - 30, 22, bw + 60, H - 44, 22); ctx.fill();
     ctx.fillStyle = '#f4e6c6';
-    ctx.font = 'bold 28px Helvetica, Arial';
-    ctx.fillText(LEVELS[this.level].short.toUpperCase(), x0 + 180, 76);
-    ctx.font = '22px Helvetica, Arial';
-    ctx.fillStyle = '#d8c8a4';
-    ctx.fillText(this.count === 0 ? 'nobody here right now' : `${this.count} ${this.count === 1 ? 'neighbour' : 'neighbours'} on the square`, x0, 108);
+    ctx.font = 'bold 22px Helvetica, Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('SOCIAL', x + bw / 2, 56);
+    // tube
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.beginPath(); ctx.roundRect(x, y0, bw, y1 - y0, bw / 2); ctx.fill();
+    if (v > 0.002) {
+      const h = Math.max(bw, (y1 - y0) * v);
+      const grd = ctx.createLinearGradient(0, y1, 0, y0);
+      grd.addColorStop(0, '#f1c453'); grd.addColorStop(0.5, '#f4845f'); grd.addColorStop(1, '#ff4f7a');
+      ctx.fillStyle = grd;
+      ctx.save();
+      ctx.beginPath(); ctx.roundRect(x, y0, bw, y1 - y0, bw / 2); ctx.clip();
+      ctx.fillRect(x, y1 - h, bw, h);
+      ctx.restore();
+    }
+    if (full) {
+      ctx.strokeStyle = `rgba(255,233,184,${0.6 + 0.4 * Math.sin(this.time * 8)})`;
+      ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.roundRect(x - 4, y0 - 4, bw + 8, y1 - y0 + 8, bw / 2 + 4); ctx.stroke();
+    }
+    ctx.fillStyle = full ? '#ffe9b8' : '#d8c8a4';
+    ctx.font = 'bold 24px Helvetica, Arial';
+    ctx.fillText(`${Math.round(v * 100)}%`, x + bw / 2, H - 32);
+    ctx.textAlign = 'left';
   }
 
   drawOverlayBody(ctx, W, H) {
@@ -1545,6 +1982,12 @@ export class Installation {
       count: this.count,
       level: this.level,
       energy: this.energy,
+      social: +this.social.toFixed(3),
+      fireworks: this.full,
+      spots: this.footGlows.map((f) => (f.occupant ? f.occupant.person.name : null)),
+      actions: [...this.tracked.values()].filter((tr) => tr.action).map((tr) => `${tr.person.name}:${tr.action.name}`),
+      bikes: [...this.tracked.values()].filter((tr) => tr.bike).map((tr) => tr.person.name),
+      nudges: [...this.tracked.values()].filter((tr) => tr.nudge).map((tr) => tr.person.name),
       theme: this.theme,
       muted: this.muted,
       playerAvatar: player ? player.style : null,
@@ -1590,10 +2033,10 @@ function beamMaterial() {
 }
 
 /** A historical-fact speech bubble for the LED wall. */
-function factBubble(text) {
-  const W = 900, pad = 34, lineH = 46;
+function factBubble(text, { worldW = 3.5, thought = false } = {}) {
+  const W = 1000, pad = 38, lineH = 62;
   const ctx0 = makeCanvas(8, 8).getContext('2d');
-  ctx0.font = '600 38px Georgia, serif';
+  ctx0.font = `${thought ? 'italic ' : ''}600 52px Georgia, serif`;
   const words = text.split(' '), lines = [];
   let line = '';
   for (const w of words) {
@@ -1609,14 +2052,18 @@ function factBubble(text) {
   ctx.strokeStyle = '#3a2a1a';
   ctx.lineWidth = 5;
   ctx.beginPath(); ctx.roundRect(x0, 3, bw, H - 34, 28); ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(W / 2 - 22, H - 33); ctx.lineTo(W / 2 - 4, H - 4); ctx.lineTo(W / 2 + 18, H - 33); ctx.closePath(); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(W / 2 - 22, H - 31); ctx.lineTo(W / 2 - 4, H - 4); ctx.lineTo(W / 2 + 18, H - 31); ctx.stroke();
+  if (thought) {
+    // a thought, not speech: little bubbles instead of a pointed tail
+    for (const [x, y, r] of [[W / 2 - 6, H - 22, 9], [W / 2 + 4, H - 7, 5]]) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+  } else {
+    ctx.beginPath(); ctx.moveTo(W / 2 - 22, H - 33); ctx.lineTo(W / 2 - 4, H - 4); ctx.lineTo(W / 2 + 18, H - 33); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(W / 2 - 22, H - 31); ctx.lineTo(W / 2 - 4, H - 4); ctx.lineTo(W / 2 + 18, H - 31); ctx.stroke();
+  }
   ctx.fillStyle = '#2a1d10';
-  ctx.font = '600 38px Georgia, serif';
+  ctx.font = `${thought ? 'italic ' : ''}600 52px Georgia, serif`;
   ctx.textAlign = 'center';
-  lines.forEach((l, i) => ctx.fillText(l, W / 2, pad + 34 + i * lineH));
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, pad + 44 + i * lineH));
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: toTexture(c, { wrap: false }), transparent: true, depthWrite: false, depthTest: false }));
-  const worldW = 2.9;
   sp.scale.set(worldW, worldW * (H / W), 1);
   sp.center.set(0.5, 0);
   sp.renderOrder = 10;
@@ -1658,6 +2105,85 @@ function vintageCar(color, van = false) {
     const l = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), lamp);
     l.position.set(1.95, 0.85, lz); g.add(l);
   }
+  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+/** Soft round glow (white centre fading out) for light pools on the ground. */
+function glowTexture() {
+  const c = makeCanvas(128, 128), ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, 'rgba(255,255,255,0.9)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0.35)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  return toTexture(c, { wrap: false });
+}
+
+/** A ring in one colour, or split into arcs of several colours (the circle round a dance). */
+function ringTexture(colors) {
+  const c = makeCanvas(256, 256), ctx = c.getContext('2d');
+  ctx.lineWidth = 26;
+  ctx.shadowBlur = 12;
+  const n = colors.length;
+  colors.forEach((col, i) => {
+    ctx.strokeStyle = ctx.shadowColor = `#${col.getHexString()}`;
+    ctx.beginPath();
+    ctx.arc(128, 128, 104, (i / n) * Math.PI * 2 + 0.04, ((i + 1) / n) * Math.PI * 2 - 0.04);
+    ctx.stroke();
+  });
+  return toTexture(c, { wrap: false });
+}
+
+/** A ring lying flat on the ground (planar UVs, so ringTexture maps onto it). */
+function groundRing(size, map, color = '#fff') {
+  const geo = new THREE.PlaneGeometry(size, size);
+  geo.rotateX(-Math.PI / 2);
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map, color, transparent: true, depthWrite: false, toneMapped: false }));
+  m.renderOrder = 4;
+  return m;
+}
+
+/** A simple roadster bicycle in the rider's colour, along +z, wheels on the ground. */
+function bicycle(color) {
+  const g = new THREE.Group();
+  const frame = M(`#${color.getHexString()}`, 0.4, 0.3), metal = M('#c8c8c8', 0.25, 0.9), tyre = M('#151515', 0.8), leather = M('#4a2e1a', 0.7);
+  const rod = (a, b, r, mat) => {
+    const d = new THREE.Vector3().subVectors(b, a);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 8), mat);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+    g.add(m);
+  };
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  g.userData.wheels = [];
+  for (const z of [-0.55, 0.55]) {
+    const w = new THREE.Group();
+    w.position.set(0, 0.36, z);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.025, 8, 32), tyre);
+    rim.rotation.y = Math.PI / 2;
+    w.add(rim);
+    for (let k = 0; k < 4; k++) {
+      const sp = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.66, 0.01), metal);
+      sp.rotation.x = (k / 4) * Math.PI;
+      w.add(sp);
+    }
+    g.add(w);
+    g.userData.wheels.push(w);
+  }
+  const crank = V(0, 0.33, -0.02), seat = V(0, 0.82, -0.18), head = V(0, 0.86, 0.4);
+  rod(V(0, 0.36, -0.55), crank, 0.018, frame);
+  rod(V(0, 0.36, -0.55), seat, 0.018, frame);
+  rod(crank, seat, 0.022, frame);
+  rod(crank, head, 0.022, frame);
+  rod(seat, head, 0.02, frame);
+  rod(head, V(0, 0.36, 0.55), 0.018, frame);
+  rod(head, V(0, 1.02, 0.36), 0.016, metal);
+  rod(V(-0.26, 1.02, 0.34), V(0.26, 1.02, 0.34), 0.014, metal);
+  const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.26), leather);
+  saddle.position.set(0, 0.86, -0.18);
+  g.add(saddle);
   g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
   return g;
 }

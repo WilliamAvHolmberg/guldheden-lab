@@ -166,16 +166,30 @@ let pipMode = 'off';
 const PIP_LABEL = { small: 'small', large: 'large', off: 'off' };
 let soundOn = true;
 
+function setTime(mode, broadcast = false) {
+  const i = TIMES.indexOf(mode);
+  if (i < 0) return;
+  if (broadcast) mp.net.send({ t: 'state', time: mode });
+  if (i === timeIdx) return;
+  timeIdx = i;
+  world.setTimeOfDay(mode);
+  $('timeBtn').innerHTML = `<i>T</i> ${TIME_LABEL[mode]}`;
+  document.querySelectorAll('#specTime button').forEach((b) => b.classList.toggle('on', b.dataset.time === mode));
+}
+mp.onSharedState = (state, by) => {
+  if (state.time && state.time !== TIMES[timeIdx]) {
+    setTime(state.time);
+    if (by && started) showHint(`${by} changed the time of day to ${TIME_LABEL[state.time].toLowerCase()}`, 3);
+  }
+};
+
 const actions = {
   cam: toggleCam,
   add: () => { if (!mp.command('add')) logEvent('Asked the host to send a visitor', 'spawn'); },
   group: () => { mp.command('group'); logEvent('A group of four neighbours is heading for the screen', 'spawn'); },
   clear: () => { mp.command('clear'); logEvent('All visitors left the square', 'leave'); },
-  time: () => {
-    timeIdx = (timeIdx + 1) % TIMES.length;
-    world.setTimeOfDay(TIMES[timeIdx]);
-    $('timeBtn').innerHTML = `<i>T</i> ${TIME_LABEL[TIMES[timeIdx]]}`;
-  },
+  // time of day is shared: changing it changes it for everyone in the room
+  time: () => setTime(TIMES[(timeIdx + 1) % TIMES.length], true),
   sensor: () => {
     installation.setSensorView(!installation.sensorView);
     $('sensorBtn')?.classList.toggle('on', installation.sensorView);
@@ -185,6 +199,7 @@ const actions = {
     $('screenBtn') && ($('screenBtn').innerHTML = `<i>V</i> Screen feed: ${PIP_LABEL[pipMode]}`);
   },
   sit: toggleSit,
+  spectate: () => setSpectator(!player.spectator),
   sound: () => {
     soundOn = !soundOn;
     audio.setMasterMuted(!soundOn);
@@ -193,11 +208,28 @@ const actions = {
   },
 };
 document.querySelectorAll('#tools button').forEach((b) => { b.onclick = () => actions[b.dataset.act](); });
+const toggleControls = () => $('controls').classList.toggle('collapsed');
+
+// ---------------------------------------------------------------- spectator mode
+function setSpectator(on) {
+  player.setSpectator(on);
+  $('hud').classList.toggle('spectating', on);
+  $('spectator').hidden = !on;
+  logEvent(on ? 'Spectator mode: flying camera' : 'Back on the square', 'kiosk');
+}
+$('specExit').onclick = () => setSpectator(false);
+document.querySelectorAll('#specTime button').forEach((b) => { b.onclick = () => setTime(b.dataset.time, true); });
+document.querySelectorAll('#specNpc button').forEach((b) => { b.onclick = () => mp.command(b.dataset.npc); });
+$('specMusic').onchange = (e) => audio.setOverride(e.target.value || null);
+document.querySelectorAll('#specTime button').forEach((b) => b.classList.toggle('on', b.dataset.time === TIMES[timeIdx]));
+$('controlsToggle').onclick = toggleControls;
 window.addEventListener('keydown', (e) => {
-  if (!started || ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if (!started || ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
   const map = { KeyC: 'cam', KeyN: 'add', KeyG: 'group', KeyT: 'time', KeyK: 'sensor', KeyV: 'screen', KeyM: 'sound' };
   if (map[e.code]) actions[map[e.code]]();
-  if (e.code === 'KeyE') toggleSit();
+  if (e.code === 'KeyE' && !player.spectator) toggleSit();
+  if (e.code === 'KeyP') actions.spectate();
+  if (e.code === 'KeyH') toggleControls();
 });
 
 /** Sit down on the nearest bench, or get up again. */
@@ -258,6 +290,7 @@ function updateHud(dt) {
   if (hudTimer > 0) return;
   hudTimer = 0.2;
   const s = installation.getState();
+  if (player.spectator) { $('specCount').textContent = crowd.agents.length; return; }
   $('sitBtn').innerHTML = `<i>E</i> ${player.seat ? 'Stand up' : 'Sit down'}`;
   document.querySelectorAll('#gestures button').forEach((b) => b.classList.toggle('active', player.gesture === b.dataset.g));
   if (pose.running) {
@@ -346,7 +379,7 @@ function simulate(dt) {
   player.enabled = started;
   player.update(dt, t, pose.running ? pose.player : null);
   updateGuest(dt, t);
-  const people = [player, ...crowd.agents, ...mp.people()];
+  const people = [...(player.spectator ? [] : [player]), ...crowd.agents, ...mp.people()];
   if (guest) people.push(guest);
   crowd.update(dt, t, people);
   mp.update(dt, t, guest);

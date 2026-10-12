@@ -1,12 +1,8 @@
 import * as THREE from 'three';
 import { Rig, modernStyle, animIdle, animWalk, animGesture, animSit, GESTURES } from './character.js';
-import { resolveCollisions, LAYOUT, headingToScreen, onStage, screenToWorld } from './world.js';
+import { resolveCollisions, LAYOUT, headingToScreen, onStage, screenToWorld, toScreenLocal, STAGE, STAGE_GATES } from './world.js';
 import { rng } from './textures.js';
-
-const NAMES = [
-  'Anna', 'Erik', 'Maja', 'Omar', 'Karin', 'Lars', 'Sara', 'Ali', 'Ingrid', 'Jonas', 'Elsa', 'Nils',
-  'Fatima', 'Gustav', 'Aya', 'Bertil', 'Linnea', 'Sven', 'Mira', 'Hassan', 'Birgitta', 'Oskar', 'Leila', 'Göran',
-];
+import { nameTag } from './speech.js';
 
 const SPAWNS = [
   () => new THREE.Vector3(-30 + Math.random() * 50, 0, 24 + Math.random() * 2),
@@ -97,7 +93,7 @@ export class Crowd {
       netPos: pos.clone(),
       netHeading: 0,
       id: id ?? `npc-${Math.random().toString(36).slice(2, 8)}-${NEXT_ID++}`,
-      name: name ?? NAMES[this.nameIdx++ % NAMES.length],
+      name: name ?? this.neighbourName(),
       kind, rig, pos, heading: 0, isPlayer: false,
       speed: kind === 'elderly' ? 0.75 + Math.random() * 0.2 : kind === 'child' ? 1.35 : 1.15 + Math.random() * 0.3,
       vel: new THREE.Vector3(), phase: Math.random() * 10,
@@ -105,6 +101,10 @@ export class Crowd {
       nextGesture: 2 + Math.random() * 3, bornAt: performance.now() / 1000, stuck: 0, lastDist: 1e9,
       hurry, sayCd: 6 + Math.random() * 14, sayId: 0, sitting: false,
     };
+    // every visitor carries a "Neighbour #" label (feedback v4)
+    a.tag = nameTag(a.name, '#e8edf2');
+    a.tag.position.set(0, 2.0 * (style.scale ?? 1), 0);
+    rig.root.add(a.tag);
     if (goScreen) this.goScreen(a, near);
     else this.goWander(a);
     this.agents.push(a);
@@ -133,6 +133,15 @@ export class Crowd {
 
   setPath(a, target) {
     a.waypoints = route(a.pos, target);
+    // the stage has a ribbon fence: walk on and off through the opening nearest the outside end
+    const inTarget = onStage(target), inNow = onStage(a.pos);
+    if (inTarget !== inNow) {
+      const lz = toScreenLocal(inNow ? target : a.pos).z;
+      const gate = STAGE_GATES.reduce((best, g) => (Math.abs(g - lz) < Math.abs(best - lz) ? g : best));
+      const outside = screenToWorld(STAGE.x0 - 1.3, gate), inside = screenToWorld(STAGE.x0 + 0.9, gate);
+      if (inTarget) a.waypoints.splice(a.waypoints.length - 1, 0, outside, inside);
+      else a.waypoints.unshift(inside, outside);
+    }
     a.next = a.waypoints.shift();
     a.state = 'walk';
     a.stuck = 0;
@@ -156,10 +165,28 @@ export class Crowd {
     this.setPath(a, SPAWNS[Math.floor(Math.random() * SPAWNS.length)]());
   }
 
+  /** "Neighbour 17": a number nobody else on the square has right now. */
+  neighbourName() {
+    const used = new Set(this.agents.map((a) => a.name));
+    for (;;) {
+      const name = `Neighbour ${++this.nameIdx}`;
+      if (!used.has(name)) return name;
+    }
+  }
+
   removeAgent(a) {
     if (a.seat) { a.seat.occupant = null; a.seat = null; }
+    a.tag?.material.map.dispose();
     a.rig.dispose();
     this.agents.splice(this.agents.indexOf(a), 1);
+  }
+
+  /** Spectator mode: send the most recent visitor home. */
+  removeOne() {
+    const a = this.agents[this.agents.length - 1];
+    if (!a) return;
+    this.onEvent(`${a.name} left the square`, 'leave');
+    this.removeAgent(a);
   }
 
   clear() {

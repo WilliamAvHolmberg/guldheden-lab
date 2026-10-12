@@ -31,6 +31,9 @@ export class Player {
     this.camPos = new THREE.Vector3();
     this.poseActive = false;
     this.enabled = true;
+    this.spectator = false; // spectator mode: a free-flying camera, no body on the square
+    this.flyPos = new THREE.Vector3();
+    this.flyVel = new THREE.Vector3();
     this.onClick = onClick;
     this.onHover = onHover;
 
@@ -57,7 +60,7 @@ export class Player {
         down.moved += Math.abs(dx) + Math.abs(dy);
         if (down.moved > 4) {
           this.yaw -= dx * 0.005;
-          this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.004, -0.15, 1.35);
+          this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.004, this.spectator ? -1.3 : -0.15, this.spectator ? 1.45 : 1.35);
         }
       } else this.onHover?.(e.clientX, e.clientY);
     });
@@ -66,6 +69,7 @@ export class Player {
       down = null;
     });
     dom.addEventListener('wheel', (e) => {
+      if (this.spectator) { this.flyPos.addScaledVector(this.lookDir(), -e.deltaY * 0.01); e.preventDefault(); return; }
       this.dist = THREE.MathUtils.clamp(this.dist * (1 + e.deltaY * 0.001), 1.4, 22);
       e.preventDefault();
     }, { passive: false });
@@ -73,7 +77,7 @@ export class Player {
   }
 
   play(name) {
-    if (!GESTURES[name]) return;
+    if (!GESTURES[name] || this.spectator) return;
     this.gesture = name;
     this.gestureT = 0;
   }
@@ -99,7 +103,53 @@ export class Player {
     this.seat = null;
   }
 
+  /** Spectator mode on/off. The camera starts flying from where it is now. */
+  setSpectator(on) {
+    if (on === this.spectator) return;
+    this.spectator = on;
+    if (on) {
+      this.standUp();
+      this.gesture = null;
+      this.flyPos.copy(this.camera.position);
+      this.flyVel.set(0, 0, 0);
+      // look the same way as the third-person camera did
+      const d = this.camTarget.clone().sub(this.camPos).normalize();
+      this.yaw = Math.atan2(-d.x, -d.z);
+      this.pitch = -Math.asin(THREE.MathUtils.clamp(d.y, -1, 1));
+    } else {
+      this.pitch = THREE.MathUtils.clamp(this.pitch, -0.15, 1.35);
+    }
+    this.rig.root.visible = !on;
+  }
+
+  lookDir(out = new THREE.Vector3()) {
+    return out.set(-Math.sin(this.yaw) * Math.cos(this.pitch), -Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
+  }
+
+  /** Free flight: W A S D along the view, Space up, Q down, Shift faster. */
+  fly(dt) {
+    const k = this.keys;
+    const dir = this.lookDir();
+    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const wish = new THREE.Vector3();
+    if (this.enabled) {
+      if (k.has('KeyW') || k.has('ArrowUp')) wish.add(dir);
+      if (k.has('KeyS') || k.has('ArrowDown')) wish.sub(dir);
+      if (k.has('KeyD') || k.has('ArrowRight')) wish.add(right);
+      if (k.has('KeyA') || k.has('ArrowLeft')) wish.sub(right);
+      if (k.has('Space')) wish.y += 1;
+      if (k.has('KeyQ')) wish.y -= 1;
+    }
+    if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(k.has('ShiftLeft') || k.has('ShiftRight') ? 18 : 6);
+    this.flyVel.lerp(wish, 1 - Math.exp(-dt * 6));
+    this.flyPos.addScaledVector(this.flyVel, dt);
+    this.flyPos.set(THREE.MathUtils.clamp(this.flyPos.x, -90, 70), THREE.MathUtils.clamp(this.flyPos.y, 0.4, 80), THREE.MathUtils.clamp(this.flyPos.z, -90, 70));
+    this.camera.position.copy(this.flyPos);
+    this.camera.lookAt(this.flyPos.clone().add(dir));
+  }
+
   update(dt, t, pose = null) {
+    if (this.spectator) { this.fly(dt); return; }
     // --- movement ---
     const k = this.keys;
     let fx = 0, fz = 0;

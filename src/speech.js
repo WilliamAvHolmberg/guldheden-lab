@@ -62,6 +62,22 @@ function bubbleSprite(text, { name = null, accent = '#f1c453' } = {}) {
   return sp;
 }
 
+/** A small name label that floats above someone's head. */
+export function nameTag(text, color = '#f1c453') {
+  const c = makeCanvas(256, 64), ctx = c.getContext('2d');
+  ctx.font = 'bold 30px system-ui, sans-serif';
+  const w = Math.min(248, ctx.measureText(text).width + 28);
+  ctx.fillStyle = 'rgba(10,12,14,0.72)';
+  ctx.beginPath(); ctx.roundRect(128 - w / 2, 8, w, 46, 23); ctx.fill();
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.fillText(text, 128, 42);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: toTexture(c, { wrap: false }), depthWrite: false, transparent: true, toneMapped: false }));
+  sp.scale.set(1.0, 0.25, 1);
+  sp.renderOrder = 10;
+  return sp;
+}
+
 /** Speech bubbles above people's heads (chat messages and NPC remarks). */
 export class Speech {
   constructor() {
@@ -74,7 +90,7 @@ export class Speech {
     const sprite = bubbleSprite(text, { name, accent });
     const scale = person.rig.style.scale ?? 1;
     // above the name tag if the person has one
-    sprite.position.set(0, 2.05 * scale + (person.isRemote ? 0.2 : 0.05), 0);
+    sprite.position.set(0, 2.05 * scale + (person.isRemote || person.tag ? 0.2 : 0.05), 0);
     person.rig.root.add(sprite);
     const dur = seconds ?? Math.min(9, 3.5 + text.length * 0.06);
     this.active.set(person.id, { sprite, until: performance.now() + dur * 1000, person });

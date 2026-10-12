@@ -55,6 +55,10 @@ export function headingToScreen(pos) {
  * (or sitting on one of its benches) appear on the screen.
  */
 export const STAGE = { x0: -7.4, x1: -0.4, z0: -6.4, z1: 6.4 };
+// openings in the ribbon fence along the stage's front edge (installation-local z, each 1.6 m wide):
+// one in the middle and one where each side light strip arrives
+export const STAGE_GATES = [-4.5, 0, 4.5];
+export const STAGE_GATE_W = 1.6;
 
 /** Is a world position on the stage floor? */
 export function onStage(pos) {

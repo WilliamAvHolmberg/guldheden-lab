@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Guldhedstorget — The Interactive Archive (simulation)</title>
+  <title>The Interactive Archive at Guldhedstorget (simulation)</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
   <div id="start">
     <div class="card">
       <div class="eyebrow">Energy group · Design-in-Action · Chalmers</div>
-      <h1>The Interactive Archive</h1>
+      <h1>The Interactive Archive <span class="at">at Guldhedstorget</span></h1>
       <p class="lead">A walkable simulation of the installation on <b>Guldhedstorget</b>, Gothenburg. A freestanding LED wall out on the square, facing the big street, turns everyone who steps onto the stage into a historical figure from the square that copies their movements. The more neighbours there are, the more colour, light and music.</p>
       <div class="grid">
         <div><kbd>W A S D</kbd> walk · <kbd>Shift</kbd> run · drag to look · scroll to zoom</div>
@@ -32,12 +32,49 @@
 
   <div id="hud" hidden>
 
+    <div id="controls">
+      <div class="ch"><span>Controls</span><button id="controlsToggle" title="Hide / show (H)"><i>H</i></button></div>
+      <dl>
+        <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>walk (or arrow keys)</dd>
+        <dt><kbd>Shift</kbd></dt><dd>sprint</dd>
+        <dt>drag</dt><dd>turn the camera</dd>
+        <dt>scroll</dt><dd>zoom</dd>
+        <dt><kbd>1</kbd>–<kbd>8</kbd></dt><dd>gestures</dd>
+        <dt><kbd>Space</kbd></dt><dd>jump</dd>
+        <dt><kbd>F</kbd></dt><dd>face the screen</dd>
+        <dt><kbd>E</kbd></dt><dd>sit on / leave a bench</dd>
+        <dt><kbd>T</kbd></dt><dd>time of day (for everyone)</dd>
+        <dt><kbd>N</kbd> / <kbd>G</kbd></dt><dd>+ visitor / + group of four</dd>
+        <dt><kbd>P</kbd></dt><dd>spectator mode</dd>
+        <dt><kbd>K</kbd></dt><dd>sensor view</dd>
+        <dt><kbd>V</kbd></dt><dd>LED wall feed: small → large → off</dd>
+        <dt><kbd>C</kbd></dt><dd>webcam pose</dd>
+        <dt><kbd>M</kbd></dt><dd>sound on / off</dd>
+      </dl>
+    </div>
+
     <div id="tools">
       <button data-act="add"><i>N</i> + Visitor</button>
       <button data-act="clear">Clear square</button>
       <button data-act="time" id="timeBtn"><i>T</i> Day</button>
       <button data-act="sit" id="sitBtn"><i>E</i> Sit down</button>
       <button data-act="sound" id="soundBtn"><i>M</i> Sound on</button>
+    </div>
+
+    <div id="spectator" hidden>
+      <div class="ch"><span>Spectator mode</span><button id="specExit">Back to the square <i>P</i></button></div>
+      <label>Time of day <small>(for everyone)</small></label>
+      <div class="seg" id="specTime"><button data-time="day">Day</button><button data-time="dusk">Dusk</button><button data-time="night">Night</button></div>
+      <label for="specMusic">Soundtrack <small>(on this computer)</small></label>
+      <select id="specMusic">
+        <option value="">Automatic – follows the stage</option>
+        <option value="soft-1">Soft song 1</option><option value="soft-2">Soft song 2</option><option value="soft-3">Soft song 3</option>
+        <option value="fast-1">Fast song 1</option><option value="fast-2">Fast song 2</option><option value="fast-3">Fast song 3</option>
+        <option value="off">Off</option>
+      </select>
+      <label>Visitors on the square: <b id="specCount">0</b></label>
+      <div class="seg" id="specNpc"><button data-npc="add">+ Visitor</button><button data-npc="group">+ Group</button><button data-npc="remove">− Visitor</button><button data-npc="clear">Clear</button></div>
+      <div class="help">Fly with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · <kbd>Space</kbd> up · <kbd>Q</kbd> down · <kbd>Shift</kbd> faster · drag to look · scroll to glide</div>
     </div>
 
     <div id="gestures"></div>

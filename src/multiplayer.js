@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { Rig, JOINTS, modernStyle } from './character.js';
 import { Net, packRig, unpackRig, round } from './net.js';
-import { makeCanvas, toTexture, rng } from './textures.js';
+import { rng } from './textures.js';
+import { nameTag } from './speech.js';
 
 const SEND_HZ = 15;
 const NPC_HZ = 8;
@@ -14,21 +15,6 @@ export function playerStyle(id) {
   s.jacket = s.jacket ?? ['#1f5f63', '#7a2e2e', '#294a6b', '#c0892e', '#3c4b3a'][h % 5];
   s.backpack = s.backpack ?? '#20252c';
   return s;
-}
-
-function nameTag(text, color = '#f1c453') {
-  const c = makeCanvas(256, 64), ctx = c.getContext('2d');
-  ctx.font = 'bold 30px system-ui, sans-serif';
-  const w = Math.min(248, ctx.measureText(text).width + 28);
-  ctx.fillStyle = 'rgba(10,12,14,0.72)';
-  ctx.beginPath(); ctx.roundRect(128 - w / 2, 8, w, 46, 23); ctx.fill();
-  ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.fillText(text, 128, 42);
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: toTexture(c, { wrap: false }), depthWrite: false, transparent: true, toneMapped: false }));
-  sp.scale.set(1.0, 0.25, 1);
-  sp.renderOrder = 10;
-  return sp;
 }
 
 class RemotePerson {
@@ -44,6 +30,9 @@ class RemotePerson {
     this.heading = 0;
     this.netHeading = 0;
     this.hasData = false;
+    this.gesture = null; // synced so this person's avatar can answer their gestures on every screen
+    this.gestureT = 0;
+    this.spectating = false;
     this.rig.root.visible = false;
     scene.add(this.rig.root);
     this.tag = nameTag(name);
@@ -52,6 +41,12 @@ class RemotePerson {
   }
 
   ingest(d) {
+    // a spectator has no body on the square (feedback v4: spectator mode)
+    this.spectating = !!d.spec;
+    this.rig.root.visible = !this.spectating && (this.hasData || d.x !== undefined);
+    if (this.spectating) { this.lastMsg = performance.now(); return; }
+    if (d.g && (d.g !== this.gesture || d.gt + 0.3 < this.gestureT)) { this.gesture = d.g; this.gestureT = d.gt ?? 0; }
+    else if (!d.g) this.gesture = null;
     this.netPos.set(d.x, 0, d.z);
     this.netHeading = d.h;
     if (!this.hasData) { this.pos.copy(this.netPos); this.heading = d.h; this.rig.root.visible = true; }
@@ -62,7 +57,8 @@ class RemotePerson {
   }
 
   update(dt) {
-    if (!this.hasData) return;
+    if (!this.hasData || this.spectating) return;
+    if (this.gesture) this.gestureT += dt;
     this.pos.lerp(this.netPos, 1 - Math.exp(-dt * 10));
     if (this.pos.distanceTo(this.netPos) > 5) this.pos.copy(this.netPos);
     let dh = this.netHeading - this.heading;
@@ -101,6 +97,7 @@ export class Multiplayer {
       onStatus: (s) => { this.status = s; this.onStatus?.(); },
       onWelcome: (m) => {
         this.installation.applyShared(m.state);
+        this.onSharedState?.(m.state);
         for (const p of m.players) if (p.id !== this.net.id) this.addRemote(p);
       },
       onJoin: (m) => {
@@ -143,11 +140,11 @@ export class Multiplayer {
         this.onChat?.({ person: who, name: m.name, text: m.text, self: false });
       },
       onNpcs: (list) => { if (!this.net.isHost) this.crowd.applySnapshot(list); },
-      onState: (m) => this.installation.applyShared(m.state, m.by),
+      onState: (m) => { this.installation.applyShared(m.state, m.by); this.onSharedState?.(m.state, m.by); },
       onCmd: (m) => {
         if (!this.net.isHost) return;
         this.runCmd(m.cmd);
-        if (m.by) this.log(`${m.by} asked for: ${m.cmd === 'group' ? 'a group of visitors' : m.cmd === 'add' ? 'a visitor' : 'an empty square'}`, 'kiosk');
+        if (m.by) this.log(`${m.by} asked for: ${{ group: 'a group of visitors', add: 'a visitor', remove: 'one visitor fewer' }[m.cmd] ?? 'an empty square'}`, 'kiosk');
       },
     });
     this.installation.onShared = (patch) => this.net.send({ t: 'state', ...patch });
@@ -190,6 +187,7 @@ export class Multiplayer {
   runCmd(cmd) {
     if (cmd === 'add') this.crowd.spawnFast();
     else if (cmd === 'group') this.crowd.spawnGroup(4);
+    else if (cmd === 'remove') this.crowd.removeOne();
     else if (cmd === 'clear') this.crowd.clear();
   }
 
@@ -202,7 +200,7 @@ export class Multiplayer {
 
   people() {
     const out = [];
-    for (const r of this.remotes.values()) if (r.hasData) out.push(r);
+    for (const r of this.remotes.values()) if (r.hasData && !r.spectating) out.push(r);
     for (const g of this.guests.values()) if (g.hasData && performance.now() - g.lastMsg < 1500) out.push(g);
     return out;
   }
@@ -215,7 +213,9 @@ export class Multiplayer {
     if (this.sendT <= 0) {
       this.sendT = 1 / SEND_HZ;
       const p = this.player;
+      if (p.spectator) { this.net.send({ t: 'p', spec: 1 }); return; }
       const msg = { t: 'p', x: round(p.pos.x), z: round(p.pos.z), h: round(p.heading), y: round(p.rig.offset.y), q: packRig(p.rig, JOINTS) };
+      if (p.gesture) { msg.g = p.gesture; msg.gt = round(p.gestureT); }
       if (guest) msg.gs = { x: round(guest.pos.x), z: round(guest.pos.z), h: round(guest.heading), y: 0, q: packRig(guest.rig, JOINTS) };
       this.net.send(msg);
     }

@@ -35,9 +35,13 @@ async function protocol() {
   a.ws.send(JSON.stringify({ t: 'p', x: 1, z: 2, h: 0, y: 0, q: [] }));
   a.ws.send(JSON.stringify({ t: 'npcs', list: [{ id: 'n1' }] }));
   b.ws.send(JSON.stringify({ t: 'state', theme: 'kids' }));
+  b.ws.send(JSON.stringify({ t: 'state', time: 'night' }));
   b.ws.send(JSON.stringify({ t: 'cmd', cmd: 'group' }));
   b.ws.send(JSON.stringify({ t: 'chat', text: 'Hej från Bo!' }));
   await sleep(600);
+  const c = await client(room, 'c3', 'Cia'); // joins late: must get the current time of day in the welcome
+  await sleep(400);
+  c.ws.close();
   a.ws.close();
   await sleep(600);
   b.ws.close();
@@ -50,6 +54,8 @@ async function protocol() {
     ['B receives A\'s player snapshot', has(b, (m) => m.t === 'p' && m.id === 'a1')],
     ['B receives host NPC snapshot', has(b, (m) => m.t === 'npcs')],
     ['A receives B\'s era change', has(a, (m) => m.t === 'state' && m.state.theme === 'kids')],
+    ['A receives B\'s time-of-day change', has(a, (m) => m.t === 'state' && m.state.time === 'night')],
+    ['A late joiner gets the shared time of day', has(c, (m) => m.t === 'welcome' && m.state.time === 'night')],
     ['B\'s command is forwarded to host A', has(a, (m) => m.t === 'cmd' && m.cmd === 'group')],
     ['A receives B\'s chat message with name', has(a, (m) => m.t === 'chat' && m.id === 'b2' && m.name === 'Bo' && m.text === 'Hej från Bo!')],
     ['B sees A leave', has(b, (m) => m.t === 'leave' && m.id === 'a1')],

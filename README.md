@@ -35,7 +35,7 @@ Open http://localhost:5199, type a name and enter the square.
 | `npm run dev` | Vite dev server on port 5199 |
 | `npm run party` | Local room server (`wrangler dev`) on port 8787. Local state is written to `.wrangler/` (git-ignored) |
 | `npm run build` / `npm run preview` | Production build to `dist/` / serve it |
-| `npm run smoke` | Protocol test against the local room server: two clients, 10 checks, should end with `All 10 checks passed` |
+| `npm run smoke` | Protocol test against the local room server: three clients, 12 checks, should end with `All 12 checks passed` |
 | `node scripts/smoke-test.mjs bot --room bot-test` | Fake player "Bertil (bot)" that walks to the wall, waves, chats and switches era. Open `http://localhost:5199/?room=bot-test` to watch |
 | `npm run smoke:prod`, `npm run bot:prod`, `npm run deploy*` | Same against / deploy to the author's production host (see [Deploy](#deploy)) |
 
@@ -55,8 +55,10 @@ Everyone who opens the same link ends up on the same square. `?room=name` gives 
 - **Chat** (`Enter`) is relayed by the server (140 chars, rate limited) and shown as a speech bubble
   above the sender and in the chat panel. Visitors (NPCs) also make remarks in bubbles.
 - **Players** send position + all 17 joint rotations 15×/s, so webcam poses (and a second webcam
-  person) are visible to everyone.
-- **Shared installation state** (era on the screen, sound) lives on the server. A pillar press
+  person) are visible to everyone, plus the gesture they are playing, so every screen shows their avatar's
+  answer to it. A player in spectator mode sends only `spec: 1` and disappears from the square for the others.
+- **Shared installation state** (era on the screen, sound, time of day) lives on the server, so someone who
+  joins later gets the current time of day too. A pillar press
   changes the screen for everybody.
 - **Visitors (NPCs)** are simulated by one client, the *host* (the first in the room; the next one takes
   over if it leaves). Other clients render them as puppets. "+ Visitor / + Group / Clear" from a
@@ -87,14 +89,16 @@ Cloudflare account. (PartyKit's shared `partykit.dev` platform currently refuses
 | --- | --- |
 | `W A S D` / arrows, `Shift` | walk / run |
 | drag, scroll | orbit camera, zoom |
-| `1`–`8`, `Space` | gestures (8 = hand-to-mouth, tests the content filter), jump |
+| `1`–`8`, `Space` | gestures (8 = hand-to-mouth, tests the content filter), jump. On the stage, your avatar answers most gestures with its own bigger move (see below) |
 | `F` | face the screen |
 | `Enter` | chat: the message appears as a speech bubble above your character (synced online) |
 | `E` | sit down on / get up from an audience bench |
 | click pillar buttons / `E` | change era (1944 / 1958 / children's drawings) and toggle sound |
 | `C` | webcam pose via MediaPipe (1–2 people) |
 | `N` / `G` | add a visitor / a group of four |
-| `T` | day → dusk → night |
+| `T` | day → dusk → night, for everyone in the room |
+| `P` | spectator mode: a flying camera with no player (`W A S D`, `Space` up, `Q` down, `Shift` faster). Its panel changes the time of day, picks a soundtrack (on your computer only) and adds or removes visitors |
+| `H` | hide / show the controls panel (all keybindings, top left) |
 | `K` | sensor view (tracking zone, skeletons, proximity links) |
 | `V` | LED wall feed picture-in-picture: small → large → off |
 | `M` | mute |
@@ -108,15 +112,33 @@ Cloudflare account. (PartyKit's shared `partykit.dev` platform currently refuses
 - **Avatars**: everyone on the stage gets a historical figure (`HISTORICAL` in `src/character.js`) that
   mirrors their pose in real time. Someone sitting on a bench appears standing.
 - **Empty stage**: the wall shows black-and-white, scratched old film of Guldhedstorget in 1944, with
-  1940s people strolling and 1940s cars driving past. Street ambience plays.
+  1940s people strolling and 1940s cars driving past. It is silent (no ambience while nobody is there).
 - **Someone steps in**: the picture turns to colour, the bulbs around the wall light up, a soft song plays.
-- **Two close together** (or two on the same bench): their avatars turn to each other and chat, with
-  speech bubbles showing historical facts (`src/facts.js`), and a murmur of voices.
+- **Two close together**, anywhere on the stage: their avatars turn to each other and chat, with
+  speech bubbles showing historical facts (`src/facts.js`, a new fact every 9 s, dimming out slowly), and a murmur of voices.
 - **Three or more close together**: their avatars dance in a ring with sparkles and confetti, vintage
-  spotlights light the stage and a high-tempo song plays.
+  spotlights (panning slowly) light the stage and a high-tempo song plays.
+- **The footprint markers**: the two-pair marker is a locked talk spot: two people on it stay in conversation
+  and someone standing next to them cannot turn it into a dance (they join a dance on open ground or the
+  dance marker instead). The three-pair marker is a dance spot: dancing starts when all three pairs are taken.
+- **Player colours**: everyone on the stage gets a colour: a ring under their avatar on the screen and under
+  them on the square, the footprints they stand on and the bench they sit on light up in it, and a dance
+  has a circle in all the dancers' colours.
+- **Sitting on a bench**: the avatar rides a bicycle (in the sitter's colour) round the screen until they get up.
+- **Gestures**: the avatar is its own character and answers a gesture with a bigger move of its own, played to
+  the end before the next: clap → jumps and clicks its heels, jump → jumps really high, dance → Lindy Hop,
+  airplane → flies, wave → a big wave with the whole arm over the head, bow → a somersault. Other movement
+  (walking, cheer, the webcam pose) is still mirrored. `GESTURE_ACTION` in `src/character.js`.
+- **Standing still**: after 7 s the avatar gets a thought bubble ("What will happen if I jump?").
+- **Social meter** on the right of the screen: 0 with nobody there, charged a little by being on the stage and
+  a lot by talking and dancing together (`SOCIAL` in `src/installation.js`). Full = fireworks over the 1944 square.
 - **Music**: the group's own songs and sounds in `public/audio` (see `CREDITS.md` there).
 - **Content filter**: a hand held at the mouth (e.g. smoking) is not mirrored. The avatar's arm stays down.
-- **Wayfinding**: Thin LED strips set flush in the paving glow softly from the entrances to the front of the stage.
+- **Wayfinding**: Thin LED strips set flush in the paving glow softly from the entrances to the front of the stage,
+  only when it is dark (off by day, dim at dusk).
+- **Ribbon fence**: stanchions with a belt round the stage, open where the light strips arrive (`STAGE_GATES`
+  in `src/world.js`). Visitors walk in and out through the openings.
+- **Visitors** are called "Neighbour 1", "Neighbour 2"… and carry a name label.
 - **"+ Visitor"** spawns someone at the edge of the audience area who hurries to the stage (~4–6 s).
 - **Performance**: static scenery is merged per material, each character is a single skinned mesh,
   the wall's scene renders at 30 Hz and the resolution adapts to the machine. `?fps` shows an FPS

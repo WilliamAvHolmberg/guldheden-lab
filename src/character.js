@@ -708,3 +708,205 @@ export function animTalk(rig, t, speaking, seed = 0) {
     rig.set('fArmL', -1.6, 0, 0);
   }
 }
+
+// ---------------------------------------------------------------------------
+// The avatar's own interpretations of a gesture (feedback v4). The person makes a small gesture,
+// the avatar on the LED wall answers with something bigger. Each action returns pose targets on the
+// rig plus a "root" hint the installation applies to the whole figure (height, flips, flight path).
+// ---------------------------------------------------------------------------
+
+/** Which avatar action answers which gesture. Gestures not listed are simply mirrored. */
+export const GESTURE_ACTION = {
+  clap: 'heelclick', // jumps and clicks the heels together
+  jump: 'highjump', // jumps really high
+  dance: 'lindy', // Lindy Hop
+  airplane: 'fly', // takes off and flies
+  wave: 'bigwave', // the whole arm over the head
+  bow: 'somersault',
+};
+
+export const ACTIONS = {
+  heelclick: { dur: 1.5 },
+  highjump: { dur: 1.6 },
+  lindy: { dur: 5.2 },
+  fly: { dur: 6.0 },
+  bigwave: { dur: 2.8 },
+  somersault: { dur: 1.9 },
+};
+
+const smoothstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+/** Crouch → airborne (u 0..1) → land, shared by the jumping actions. */
+function hop(t, crouchEnd, airEnd, dur) {
+  if (t < crouchEnd) return { phase: 'crouch', k: smoothstep(0, crouchEnd, t), u: 0 };
+  if (t < airEnd) return { phase: 'air', k: 0, u: (t - crouchEnd) / (airEnd - crouchEnd) };
+  return { phase: 'land', k: 1 - smoothstep(airEnd, dur, t), u: 1 };
+}
+
+function crouchPose(rig, k) {
+  rig.set('thighL', -0.8 * k, 0, 0.05);
+  rig.set('thighR', -0.8 * k, 0, -0.05);
+  rig.set('shinL', 1.4 * k, 0, 0);
+  rig.set('shinR', 1.4 * k, 0, 0);
+  rig.set('footL', -0.5 * k, 0, 0);
+  rig.set('footR', -0.5 * k, 0, 0);
+  rig.set('spine', 0.35 * k, 0, 0);
+  rig.offsetTarget.y = -0.22 * k;
+}
+
+/**
+ * Apply an avatar action at time t. Returns null when it is over, otherwise
+ * { y, fwd, x, z, pitch, roll, yawAdd, yaw } — root offsets/rotations (any may be missing).
+ */
+export function animAction(rig, name, t) {
+  const a = ACTIONS[name];
+  if (!a || t > a.dur) return null;
+  const root = {};
+  switch (name) {
+    case 'bigwave': {
+      const e = envelope(t, a.dur, 0.35);
+      const sw = Math.sin(t * 5.5);
+      // the whole right arm straight up over the head, sweeping wide from side to side
+      rig.set('uArmR', -0.15 * e, 0, -(2.85 + 0.45 * sw) * e - 0.09 * (1 - e));
+      rig.set('fArmR', 0, 0, 0.12 * sw * e);
+      rig.set('handR', 0, 0, 0.3 * sw * e);
+      rig.set('chest', 0, 0, -0.1 * sw * e);
+      rig.set('head', 0, 0.15 * sw * e, -0.08 * e);
+      rig.set('uArmL', 0.1 * e, 0, 0.55 * e + 0.09 * (1 - e)); // other hand on the hip
+      rig.set('fArmL', -1.6 * e, 0, 0);
+      root.y = 0.04 * Math.abs(Math.sin(t * 5.5)) * e; // a little bounce
+      break;
+    }
+    case 'highjump': {
+      const h = hop(t, 0.35, 1.25, a.dur);
+      if (h.phase !== 'air') {
+        crouchPose(rig, h.k);
+        rig.set('uArmL', 0.6 * h.k, 0, 0.2);
+        rig.set('uArmR', 0.6 * h.k, 0, -0.2);
+      } else {
+        const tuck = Math.sin(h.u * Math.PI);
+        root.y = 1.25 * 4 * h.u * (1 - h.u);
+        rig.set('thighL', -1.3 * tuck, 0, 0.1);
+        rig.set('thighR', -1.3 * tuck, 0, -0.1);
+        rig.set('shinL', 1.9 * tuck, 0, 0);
+        rig.set('shinR', 1.9 * tuck, 0, 0);
+        rig.set('uArmL', 0, 0, 2.8 - 0.4 * tuck);
+        rig.set('uArmR', 0, 0, -2.8 + 0.4 * tuck);
+        rig.set('head', -0.3 * tuck, 0, 0);
+      }
+      break;
+    }
+    case 'heelclick': {
+      const h = hop(t, 0.3, 1.1, a.dur);
+      if (h.phase !== 'air') {
+        crouchPose(rig, h.k * 0.8);
+      } else {
+        const k = Math.sin(h.u * Math.PI);
+        root.y = 0.8 * 4 * h.u * (1 - h.u);
+        root.roll = -0.18 * k;
+        // both legs swing out to the side and the heels meet in the air
+        rig.set('thighL', 0, 0, 0.35 * k);
+        rig.set('thighR', 0, 0, 0.78 * k);
+        rig.set('shinL', 0.35 * k, 0, 0);
+        rig.set('shinR', 0.35 * k, 0, 0);
+        rig.set('footL', 0, 0, -0.3 * k);
+        rig.set('footR', 0, 0, -0.3 * k);
+        rig.set('uArmR', 0, 0, -2.7 * k - 0.09);
+        rig.set('uArmL', 0, 0, 1.3 * k + 0.09);
+        rig.set('head', -0.2 * k, 0, 0.1 * k);
+      }
+      break;
+    }
+    case 'somersault': {
+      const h = hop(t, 0.4, 1.4, a.dur);
+      if (h.phase !== 'air') {
+        crouchPose(rig, h.k);
+        rig.set('uArmL', 0.8 * h.k, 0, 0.2); // arms swing back before take-off
+        rig.set('uArmR', 0.8 * h.k, 0, -0.2);
+      } else {
+        const u = h.u;
+        const tuck = smoothstep(0, 0.25, u) * (1 - smoothstep(0.75, 1, u));
+        const height = 1.0 * 4 * u * (1 - u);
+        const th = Math.PI * 2 * smoothstep(0.05, 0.95, u); // one full forward flip
+        // rotate round the hips (0.6 m up), not round the feet
+        root.pitch = th;
+        root.y = 0.6 + height - 0.6 * Math.cos(th);
+        root.fwd = -0.6 * Math.sin(th);
+        rig.set('thighL', -1.9 * tuck, 0, 0.05);
+        rig.set('thighR', -1.9 * tuck, 0, -0.05);
+        rig.set('shinL', 2.3 * tuck, 0, 0);
+        rig.set('shinR', 2.3 * tuck, 0, 0);
+        rig.set('spine', 0.5 * tuck, 0, 0);
+        rig.set('head', 0.4 * tuck, 0, 0);
+        rig.set('uArmL', -1.2 * tuck, 0, 0.3); // hugging the knees
+        rig.set('uArmR', -1.2 * tuck, 0, -0.3);
+        rig.set('fArmL', -1.2 * tuck, 0, 0);
+        rig.set('fArmR', -1.2 * tuck, 0, 0);
+      }
+      break;
+    }
+    case 'lindy': {
+      // swing-era Lindy Hop: bouncy triple steps and kicks, a swing-out arm, a spin in the middle
+      const e = envelope(t, a.dur, 0.4);
+      const beat = t * 2.6 * Math.PI; // ~2.6 steps/s
+      const s = Math.sin(beat), kick = Math.max(0, Math.sin(beat / 2));
+      const side = Math.sin(beat / 2) > 0 ? 1 : -1;
+      root.y = -0.05 * Math.abs(Math.cos(beat)) * e;
+      rig.set('spine', 0.18 * e, 0.15 * s * e, 0);
+      rig.set('hips', 0, -0.25 * s * e, 0);
+      rig.set('thighL', (side > 0 ? -0.75 * kick : -0.15 * Math.abs(s)) * e, 0, 0.05);
+      rig.set('thighR', (side < 0 ? -0.75 * kick : -0.15 * Math.abs(s)) * e, 0, -0.05);
+      rig.set('shinL', (side > 0 ? 0.15 : 0.6 * Math.abs(s)) * e, 0, 0);
+      rig.set('shinR', (side < 0 ? 0.15 : 0.6 * Math.abs(s)) * e, 0, 0);
+      rig.set('uArmR', -0.5 * e, 0, -(1.25 + 0.3 * s) * e - 0.09 * (1 - e)); // swing-out arm, as if holding a partner
+      rig.set('fArmR', -0.4 * e, 0, 0);
+      rig.set('uArmL', 0.6 * s * e, 0, 0.35 * e + 0.09);
+      rig.set('fArmL', -1.4 * e, 0, 0);
+      rig.set('head', 0.05, 0.25 * s * e, 0);
+      root.yawAdd = Math.PI * 2 * smoothstep(2.0, 3.0, t); // spin
+      break;
+    }
+    case 'fly': {
+      // take off, swoop in a figure of eight over the square, land again
+      const up = smoothstep(0.3, 1.2, t) * (1 - smoothstep(a.dur - 1.0, a.dur - 0.1, t));
+      const ft = Math.max(0, t - 0.8);
+      const w = (Math.PI * 2) / 4.4;
+      root.x = 2.6 * Math.sin(w * ft) * up;
+      root.z = -0.8 * Math.sin(2 * w * ft) * up;
+      root.y = (1.5 + 0.25 * Math.sin(t * 2.2)) * up;
+      const dx = 2.6 * w * Math.cos(w * ft), dz = -1.6 * w * Math.cos(2 * w * ft);
+      root.yaw = Math.atan2(dx, dz);
+      root.yawBlend = up;
+      root.pitch = 1.25 * up; // lying flat, head first, like a superhero
+      root.roll = -0.35 * Math.sin(w * ft) * up;
+      if (t < 0.4) crouchPose(rig, smoothstep(0, 0.4, t) * 0.6);
+      rig.set('uArmL', 0, 0, 1.52 * up + 0.09 * (1 - up)); // wings out
+      rig.set('uArmR', 0, 0, -1.52 * up - 0.09 * (1 - up));
+      rig.set('thighL', 0.15 * up, 0, 0.04);
+      rig.set('thighR', 0.15 * up, 0, -0.04);
+      rig.set('head', -0.6 * up, 0, 0);
+      break;
+    }
+    default:
+      return null;
+  }
+  return root;
+}
+
+/** Pedalling on a bicycle: seated, hands on the handlebar, legs going round. */
+export function animCycle(rig, phase) {
+  const s = Math.sin(phase), c = Math.cos(phase);
+  rig.offsetTarget.set(0, -0.12, 0);
+  rig.set('spine', 0.35, 0, 0);
+  rig.set('head', -0.25, 0, 0);
+  rig.set('thighL', -1.05 - 0.35 * s, 0, 0.04);
+  rig.set('thighR', -1.05 + 0.35 * s, 0, -0.04);
+  rig.set('shinL', 1.15 + 0.45 * c, 0, 0);
+  rig.set('shinR', 1.15 - 0.45 * c, 0, 0);
+  rig.set('footL', -0.1 * c, 0, 0);
+  rig.set('footR', 0.1 * c, 0, 0);
+  rig.set('uArmL', -0.95, 0, 0.12);
+  rig.set('uArmR', -0.95, 0, -0.12);
+  rig.set('fArmL', -0.35, 0, 0);
+  rig.set('fArmR', -0.35, 0, 0);
+}
