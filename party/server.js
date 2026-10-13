@@ -1,6 +1,6 @@
 // PartyServer (Cloudflare Durable Object) room for Guldhedstorget.
 // - relays player snapshots (position + joint rotations) between clients
-// - keeps the shared installation state (era on the screen, sound on/off)
+// - keeps the shared state (era on the screen, sound on/off, time of day for everyone)
 // - elects a "host" client that simulates the NPC visitors and broadcasts them
 
 import { Server, routePartykitRequest } from 'partyserver';
@@ -8,7 +8,7 @@ import { Server, routePartykitRequest } from 'partyserver';
 export class Guldheden extends Server {
   constructor(ctx, env) {
     super(ctx, env);
-    this.shared = { theme: '1944', muted: false };
+    this.shared = { theme: '1944', muted: false, time: 'day' };
     this.hostId = null;
     this.meta = new Map(); // connection id -> { name, style }
     this.lastChat = new Map(); // connection id -> timestamp (simple rate limit)
@@ -57,6 +57,7 @@ export class Guldheden extends Server {
       case 'state': {
         if (typeof msg.theme === 'string') this.shared.theme = msg.theme;
         if (typeof msg.muted === 'boolean') this.shared.muted = msg.muted;
+        if (['day', 'dusk', 'night'].includes(msg.time)) this.shared.time = msg.time;
         this.broadcastJSON({ t: 'state', state: this.shared, by: this.meta.get(sender.id)?.name, reason: msg.reason }, [sender.id]);
         break;
       }

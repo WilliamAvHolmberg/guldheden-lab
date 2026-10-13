@@ -130,3 +130,34 @@ kbd {
   border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; outline: none; backdrop-filter: blur(10px);
 }
 #chatInput:focus { border-color: var(--gold); }
+
+#start h1 span { display: block; font-size: 0.62em; color: var(--gold); margin-top: 2px; }
+
+/* controls panel (H toggles) */
+#keys { position: absolute; left: 16px; top: 16px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(18, 21, 26, 0.72); color: #d7dbe0; font-size: 12.5px; line-height: 1.75; pointer-events: auto; }
+#keys .kh { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); margin-bottom: 4px; display: flex; justify-content: space-between; gap: 16px; }
+#keys .kh span { color: var(--muted); letter-spacing: 0; text-transform: none; }
+#keys kbd { font-size: 10.5px; padding: 0 5px; }
+#keys.min > div:not(.kh) { display: none; }
+#keys .kh { cursor: pointer; }
+#keys em { font-style: normal; }
+
+/* spectator mode: the controls panel shows the flying-camera keys instead */
+#keys .spec { display: none; }
+body.spectating #keys .spec { display: block; }
+body.spectating #keys .play { display: none; }
+body.spectating #gestures, body.spectating #sitBtn { display: none; }
+#keys.min > div:not(.kh) { display: none !important; }
+#start button.ghost { background: transparent; color: var(--gold); border: 1px solid var(--gold); }
+
+/* spectator panel (right side) */
+#spectator { position: absolute; right: 16px; top: 16px; width: 260px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(18, 21, 26, 0.82); color: #d7dbe0; font-size: 12.5px; pointer-events: auto; }
+#spectator .sh { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; }
+#spectator .sh button, #spectator .seg button { pointer-events: auto; cursor: pointer; font: inherit; letter-spacing: 0; text-transform: none; color: #e9edf1; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 8px; padding: 4px 8px; }
+#spectator .sh i { font-style: normal; font: 600 10.5px ui-monospace, monospace; color: var(--muted); margin-right: 4px; }
+#spectator label { display: block; margin: 10px 0 4px; color: var(--muted); }
+#spectator label small { color: #8b939b; }
+#spectator .seg { display: flex; gap: 4px; flex-wrap: wrap; }
+#spectator .seg button.on { border-color: var(--gold); color: var(--gold); }
+#spectator select { width: 100%; padding: 5px 6px; border-radius: 8px; background: rgba(255, 255, 255, 0.07); color: #e9edf1; border: 1px solid rgba(255, 255, 255, 0.16); font: inherit; }
+body.spectating #tools [data-act="add"], body.spectating #tools [data-act="remove"], body.spectating #tools [data-act="clear"], body.spectating #tools [data-act="time"] { display: none; }

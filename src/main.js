@@ -48,7 +48,6 @@ const installation = new Installation(scene, renderer, { obstacles: world.obstac
 const crowd = new Crowd(scene, world.obstacles, logEvent);
 const speech = new Speech();
 crowd.seats = installation.seats;
-crowd.onSay = (a, text) => speech.say(a, text, { name: a.name, seconds: 4.5 });
 const mp = new Multiplayer({
   scene, player: null, crowd, installation, log: logEvent, onStatus: () => updateOnline(),
   onChat: ({ person, name, text }) => {
@@ -151,6 +150,19 @@ GESTURE_KEYS.forEach((name, i) => {
   gestEl.appendChild(b);
 });
 
+// hold hands: a toggle next to the gestures
+const handBtn = document.createElement('button');
+handBtn.innerHTML = '<i>X</i>Hold hands';
+handBtn.title = 'Hold out your hand – someone close by who does the same takes it';
+handBtn.onclick = () => toggleHands();
+gestEl.appendChild(handBtn);
+function toggleHands() {
+  if (spectator.on) return;
+  if (player.seat) { showHint('Stand up first to hold hands', 2); return; }
+  player.toggleHands();
+  showHint(player.wantsHands ? 'You hold out your hand' : 'You let go', 1.5);
+}
+
 let hintTimer = 0;
 function showHint(text, dur = 2.5) {
   const h = $('hint');
@@ -166,15 +178,29 @@ let pipMode = 'off';
 const PIP_LABEL = { small: 'small', large: 'large', off: 'off' };
 let soundOn = true;
 
+function setTime(mode) {
+  if (!TIMES.includes(mode)) return;
+  timeIdx = TIMES.indexOf(mode);
+  world.setTimeOfDay(mode);
+  $('timeBtn').innerHTML = `<i>T</i> ${TIME_LABEL[mode]}`;
+  document.querySelectorAll('#specTime button').forEach((b) => b.classList.toggle('on', b.dataset.time === mode));
+}
+mp.onTime = (mode, by) => {
+  if (mode === TIMES[timeIdx]) return;
+  setTime(mode);
+  if (by && started) showHint(`${by} changed the time of day to ${TIME_LABEL[mode].toLowerCase()}`, 3);
+};
+
 const actions = {
   cam: toggleCam,
   add: () => { if (!mp.command('add')) logEvent('Asked the host to send a visitor', 'spawn'); },
   group: () => { mp.command('group'); logEvent('A group of four neighbours is heading for the screen', 'spawn'); },
   clear: () => { mp.command('clear'); logEvent('All visitors left the square', 'leave'); },
+  remove: () => { mp.command('remove'); },
+  spectate: () => setSpectator(!spectator.on),
   time: () => {
-    timeIdx = (timeIdx + 1) % TIMES.length;
-    world.setTimeOfDay(TIMES[timeIdx]);
-    $('timeBtn').innerHTML = `<i>T</i> ${TIME_LABEL[TIMES[timeIdx]]}`;
+    setTime(TIMES[(timeIdx + 1) % TIMES.length]);
+    mp.shareTime(TIMES[timeIdx]); // the time of day is the same for everyone in the room
   },
   sensor: () => {
     installation.setSensorView(!installation.sensorView);
@@ -194,11 +220,91 @@ const actions = {
 };
 document.querySelectorAll('#tools button').forEach((b) => { b.onclick = () => actions[b.dataset.act](); });
 window.addEventListener('keydown', (e) => {
-  if (!started || ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-  const map = { KeyC: 'cam', KeyN: 'add', KeyG: 'group', KeyT: 'time', KeyK: 'sensor', KeyV: 'screen', KeyM: 'sound' };
+  if (!started || ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+  const map = { KeyC: 'cam', KeyN: 'add', KeyB: 'remove', KeyG: 'group', KeyT: 'time', KeyK: 'sensor', KeyV: 'screen', KeyM: 'sound', KeyO: 'spectate' };
   if (map[e.code]) actions[map[e.code]]();
-  if (e.code === 'KeyE') toggleSit();
+  if (e.code === 'KeyE' && !spectator.on) toggleSit();
+  if (e.code === 'KeyH') toggleKeys();
+  if (e.code === 'KeyX') toggleHands();
 });
+
+// controls panel: shown by default, H folds it away (remembered per browser)
+function toggleKeys(force) {
+  const min = force ?? !$('keys').classList.contains('min');
+  $('keys').classList.toggle('min', min);
+  $('keys').querySelector('em').textContent = min ? 'show' : 'hide';
+  try { localStorage.setItem('gh-keys-min', min ? '1' : ''); } catch {}
+}
+try { if (localStorage.getItem('gh-keys-min')) toggleKeys(true); } catch {}
+$('keys').querySelector('.kh').onclick = () => toggleKeys();
+
+// ---------------------------------------------------------------- spectator mode
+/**
+ * Spectator mode: a free-flying camera and no character of your own (others don't see you).
+ * W A S D fly along the view, E / Space up, Q down, Shift faster, drag to look, scroll to glide.
+ * The panel on the right changes the time of day (for everyone), the soundtrack (on this computer
+ * only) and the visitors.
+ */
+const spectator = { on: false, pos: new THREE.Vector3(), vel: new THREE.Vector3(), keys: new Set() };
+const typing = (e) => ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+window.addEventListener('keydown', (e) => { if (!typing(e)) spectator.keys.add(e.code); });
+window.addEventListener('keyup', (e) => spectator.keys.delete(e.code));
+window.addEventListener('blur', () => spectator.keys.clear());
+const lookDir = () => new THREE.Vector3(-Math.sin(player.yaw) * Math.cos(player.pitch), -Math.sin(player.pitch), -Math.cos(player.yaw) * Math.cos(player.pitch));
+player.onGlide = (d) => spectator.pos.addScaledVector(lookDir(), d);
+
+function setSpectator(on) {
+  if (on === spectator.on) return;
+  spectator.on = on;
+  player.spectator = on;
+  mp.spectator = on;
+  document.body.classList.toggle('spectating', on);
+  $('specBtn').classList.toggle('on', on);
+  $('spectator').hidden = !on;
+  if (on) {
+    if (player.seat) player.standUp();
+    player.gesture = null;
+    spectator.pos.copy(camera.position);
+    spectator.vel.set(0, 0, 0);
+    // keep looking the way the third-person camera looked
+    const d = camera.getWorldDirection(new THREE.Vector3());
+    player.yaw = Math.atan2(-d.x, -d.z);
+    player.pitch = -Math.asin(THREE.MathUtils.clamp(d.y, -1, 1));
+    player.rig.root.visible = false;
+    showHint('Spectator mode – fly with W A S D, E / Q up / down, drag to look · O to play again', 5);
+  } else {
+    player.pitch = THREE.MathUtils.clamp(player.pitch, -0.15, 1.35);
+    player.rig.root.visible = true;
+    audio.setOverride(null);
+    $('specMusic').value = '';
+    showHint('Back on the square', 2);
+  }
+}
+$('specExit').onclick = () => setSpectator(false);
+document.querySelectorAll('#specTime button').forEach((b) => { b.onclick = () => { setTime(b.dataset.time); mp.shareTime(b.dataset.time); }; });
+document.querySelectorAll('#specNpc button').forEach((b) => { b.onclick = () => mp.command(b.dataset.npc); });
+$('specMusic').onchange = (e) => audio.setOverride(e.target.value || null);
+document.querySelectorAll('#specTime button').forEach((b) => b.classList.toggle('on', b.dataset.time === TIMES[timeIdx]));
+
+function updateSpectator(dt) {
+  const k = spectator.keys;
+  const dir = lookDir();
+  const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  const wish = new THREE.Vector3();
+  if (k.has('KeyW') || k.has('ArrowUp')) wish.add(dir);
+  if (k.has('KeyS') || k.has('ArrowDown')) wish.sub(dir);
+  if (k.has('KeyD') || k.has('ArrowRight')) wish.add(right);
+  if (k.has('KeyA') || k.has('ArrowLeft')) wish.sub(right);
+  if (k.has('KeyE') || k.has('Space')) wish.y += 1;
+  if (k.has('KeyQ')) wish.y -= 1;
+  if (wish.lengthSq()) wish.normalize().multiplyScalar(k.has('ShiftLeft') || k.has('ShiftRight') ? 18 : 6);
+  spectator.vel.lerp(wish, 1 - Math.exp(-dt * 6)); // ease in and out
+  spectator.pos.addScaledVector(spectator.vel, dt);
+  spectator.pos.y = THREE.MathUtils.clamp(spectator.pos.y, 0.4, 60);
+  camera.position.copy(spectator.pos);
+  camera.lookAt(spectator.pos.clone().add(dir));
+  $('specCount').textContent = crowd.agents.length;
+}
 
 /** Sit down on the nearest bench, or get up again. */
 function toggleSit() {
@@ -260,12 +366,14 @@ function updateHud(dt) {
   const s = installation.getState();
   $('sitBtn').innerHTML = `<i>E</i> ${player.seat ? 'Stand up' : 'Sit down'}`;
   document.querySelectorAll('#gestures button').forEach((b) => b.classList.toggle('active', player.gesture === b.dataset.g));
+  handBtn.classList.toggle('active', !!player.wantsHands);
+  handBtn.innerHTML = `<i>X</i>${player.handSides?.length ? 'Let go' : player.wantsHands ? 'Hand held out…' : 'Hold hands'}`;
   if (pose.running) {
     camStatus.textContent = pose.poses.length
       ? `Tracking ${pose.poses.length} ${pose.poses.length === 1 ? 'person' : 'people'} · ${pose.fps} Hz${pose.player && !pose.player.legsVisible ? ' · legs not visible, animating legs' : ''}`
       : 'No person detected – step back so the camera sees your upper body';
   }
-  if (!hintTimer) {
+  if (!hintTimer && !spectator.on) {
     const off = screenOffset(player.pos);
     const seat = nearestSeat();
     if (player.seat) showHint('You’re sitting on the bench – press E or walk to stand up', 0.4);
@@ -343,10 +451,11 @@ function simulate(dt) {
     pose.detect(performance.now());
     pose.drawPreview(camCanvas);
   }
-  player.enabled = started;
-  player.update(dt, t, pose.running ? pose.player : null);
+  player.enabled = started && !spectator.on;
+  if (spectator.on) updateSpectator(dt);
+  else player.update(dt, t, pose.running ? pose.player : null);
   updateGuest(dt, t);
-  const people = [player, ...crowd.agents, ...mp.people()];
+  const people = [...(spectator.on ? [] : [player]), ...crowd.agents, ...mp.people()];
   if (guest) people.push(guest);
   crowd.update(dt, t, people);
   mp.update(dt, t, guest);
@@ -357,7 +466,7 @@ function simulate(dt) {
   audio.setMood({
     onStage: installation.standing ?? 0,
     seated: installation.count - (installation.standing ?? 0),
-    talking: installation.talking,
+    talkGroups: installation.talkGroups,
     dancing: installation.dancing,
   });
 }
@@ -416,8 +525,9 @@ function updateOnline() {
   if (!started || !mp.net.socket) return;
   logEvent(mp.online ? `online · room ${mp.net.room} · ${mp.count} connected${mp.isHost ? ' · host' : ''}` : 'connecting…');
 }
+$('watch').onclick = () => { enter.onclick(); setSpectator(true); };
 enter.onclick = () => {
-  const name = (nameInput.value || '').trim() || `Neighbour ${Math.floor(Math.random() * 900 + 100)}`;
+  const name = (nameInput.value || '').trim() || `Guest ${Math.floor(Math.random() * 900 + 100)}`;
   try { localStorage.setItem('gh-name', name); } catch {}
   player.name = name;
   mp.start(name, player.rig.style);

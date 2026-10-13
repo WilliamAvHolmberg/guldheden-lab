@@ -88,13 +88,14 @@ Cloudflare account. (PartyKit's shared `partykit.dev` platform currently refuses
 | `W A S D` / arrows, `Shift` | walk / run |
 | drag, scroll | orbit camera, zoom |
 | `1`–`8`, `Space` | gestures (8 = hand-to-mouth, tests the content filter), jump |
+| `X` | hold out a hand: the 1–2 nearest people within arm's reach who do the same hold hands |
 | `F` | face the screen |
-| `Enter` | chat: the message appears as a speech bubble above your character (synced online) |
 | `E` | sit down on / get up from an audience bench |
-| click pillar buttons / `E` | change era (1944 / 1958 / children's drawings) and toggle sound |
 | `C` | webcam pose via MediaPipe (1–2 people) |
-| `N` / `G` | add a visitor / a group of four |
-| `T` | day → dusk → night |
+| `N` / `B` / `G` | add a visitor / remove one / a group of four |
+| `T` | day → dusk → night (the same for everyone in the room) |
+| `O` | spectator mode: a flying camera, no character (`W A S D` fly, `E`/`Space` up, `Q` down); a panel for time of day, soundtrack (this computer) and visitors |
+| `H` | show / hide the controls panel |
 | `K` | sensor view (tracking zone, skeletons, proximity links) |
 | `V` | LED wall feed picture-in-picture: small → large → off |
 | `M` | mute |
@@ -102,21 +103,36 @@ Cloudflare account. (PartyKit's shared `partykit.dev` platform currently refuses
 ## How the concept is modelled
 
 - **The stage**: a flush wooden floor in front of the wall with "STEP IN" and footprint groups painted on
-  it (two pairs, three pairs). There are deliberately no captions: visitors discover what standing
-  together does. Nothing triggers on the footprints themselves. Only people
+  it (two pairs, three pairs).
+  There are deliberately no captions: visitors discover what standing together does. Only people
   standing on the stage, or sitting on one of the four benches along its edges, appear on the screen.
 - **Avatars**: everyone on the stage gets a historical figure (`HISTORICAL` in `src/character.js`) that
-  mirrors their pose in real time. Someone sitting on a bench appears standing.
-- **Empty stage**: the wall shows black-and-white, scratched old film of Guldhedstorget in 1944, with
-  1940s people strolling and 1940s cars driving past. Street ambience plays.
+  follows their pose, and a colour of their own (a ring under the avatar and at their feet; the
+  footprints and benches they use light up in it). Gestures make the avatar do bigger moves of its own:
+  clap → heel click, jump → high jump, wave → big wave, bow → somersault, airplane → flies a loop,
+  dance → Lindy Hop. Sitting on a bench → the avatar rides a bicycle round. Standing still for a while →
+  a thought bubble suggests something to try.
+- **Empty stage**: the wall shows black-and-white, scratched old film of Guldhedstorget in the 1940s, with
+  silent. The only people on the screen are the avatars of the people on the stage – no extra
+  passers-by, no traffic (two 1940s cars stand parked along the street).
 - **Someone steps in**: the picture turns to colour, the bulbs around the wall light up, a soft song plays.
 - **Two close together** (or two on the same bench): their avatars turn to each other and chat, with
-  speech bubbles showing historical facts (`src/facts.js`), and a murmur of voices.
-- **Three or more close together**: their avatars dance in a ring with sparkles and confetti, vintage
-  spotlights light the stage and a high-tempo song plays.
+  speech bubbles showing historical facts (`src/facts.js`); one chatting pair sounds like a quiet
+  conversation, several pairs like a murmuring crowd. The 2-footprint spot is a locked talk spot.
+- **Three or more close together**, or all three footprints of the dance spot taken: the avatars dance in
+  a ring inside a circle of their colours, with sparkles and confetti and a high-tempo song.
+  Three or more anywhere on the stage turn on slowly sweeping spotlights.
+- **Holding hands** (`X`, both people): a pair's avatars hold hands and a flower grows from their joined
+  hands; three or more in a chain dance a synced set dance in a line.
+- **Social meter** ("TOGETHER", a column on the right of the screen in the wall's archive style, yellow)
+  shows how social the stage is right now: just being there counts a little (at most 25 %), doing things
+  with others much more – chatting, dancing, holding hands, the same gesture at the same time – and
+  bigger groups count more. Full → fireworks in the colours of the people on the stage.
+- **Empty stage**: the screen is old black-and-white film with a clear invitation to step onto the stage. Nothing on the
+  screen explains what standing together does – visitors find out for themselves.
 - **Music**: the group's own songs and sounds in `public/audio` (see `CREDITS.md` there).
 - **Content filter**: a hand held at the mouth (e.g. smoking) is not mirrored. The avatar's arm stays down.
-- **Wayfinding**: Thin LED strips set flush in the paving glow softly from the entrances to the front of the stage.
+- **Wayfinding**: thin LED strips set flush in the paving glow and pulse calmly from the entrances to the stage, in every light.
 - **"+ Visitor"** spawns someone at the edge of the audience area who hurries to the stage (~4–6 s).
 - **Performance**: static scenery is merged per material, each character is a single skinned mesh,
   the wall's scene renders at 30 Hz and the resolution adapts to the machine. `?fps` shows an FPS

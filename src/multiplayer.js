@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Rig, JOINTS, modernStyle } from './character.js';
 import { Net, packRig, unpackRig, round } from './net.js';
-import { makeCanvas, toTexture, rng } from './textures.js';
+import { rng, nameTag } from './textures.js';
 
 const SEND_HZ = 15;
 const NPC_HZ = 8;
@@ -14,21 +14,6 @@ export function playerStyle(id) {
   s.jacket = s.jacket ?? ['#1f5f63', '#7a2e2e', '#294a6b', '#c0892e', '#3c4b3a'][h % 5];
   s.backpack = s.backpack ?? '#20252c';
   return s;
-}
-
-function nameTag(text, color = '#f1c453') {
-  const c = makeCanvas(256, 64), ctx = c.getContext('2d');
-  ctx.font = 'bold 30px system-ui, sans-serif';
-  const w = Math.min(248, ctx.measureText(text).width + 28);
-  ctx.fillStyle = 'rgba(10,12,14,0.72)';
-  ctx.beginPath(); ctx.roundRect(128 - w / 2, 8, w, 46, 23); ctx.fill();
-  ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.fillText(text, 128, 42);
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: toTexture(c, { wrap: false }), depthWrite: false, transparent: true, toneMapped: false }));
-  sp.scale.set(1.0, 0.25, 1);
-  sp.renderOrder = 10;
-  return sp;
 }
 
 class RemotePerson {
@@ -52,11 +37,19 @@ class RemotePerson {
   }
 
   ingest(d) {
+    // a spectator has no character on the square
+    this.hidden = !!d.hidden;
+    this.rig.root.visible = !this.hidden && this.hasData;
+    if (this.hidden) return;
     this.netPos.set(d.x, 0, d.z);
     this.netHeading = d.h;
-    if (!this.hasData) { this.pos.copy(this.netPos); this.heading = d.h; this.rig.root.visible = true; }
+    if (!this.hasData) { this.pos.copy(this.netPos); this.heading = d.h; }
+    this.rig.root.visible = true;
     this.hasData = true;
     if (d.q) unpackRig(this.rig, JOINTS, d.q);
+    this.gesture = d.g ?? null;
+    this.gestureT = d.gt ?? 0;
+    this.wantsHands = !!d.hh;
     this.rig.offsetTarget.set(0, d.y ?? 0, 0);
     this.lastMsg = performance.now();
   }
@@ -101,6 +94,7 @@ export class Multiplayer {
       onStatus: (s) => { this.status = s; this.onStatus?.(); },
       onWelcome: (m) => {
         this.installation.applyShared(m.state);
+        if (m.state?.time) this.onTime?.(m.state.time);
         for (const p of m.players) if (p.id !== this.net.id) this.addRemote(p);
       },
       onJoin: (m) => {
@@ -143,7 +137,10 @@ export class Multiplayer {
         this.onChat?.({ person: who, name: m.name, text: m.text, self: false });
       },
       onNpcs: (list) => { if (!this.net.isHost) this.crowd.applySnapshot(list); },
-      onState: (m) => this.installation.applyShared(m.state, m.by),
+      onState: (m) => {
+        this.installation.applyShared(m.state, m.by);
+        if (m.state?.time) this.onTime?.(m.state.time, m.by);
+      },
       onCmd: (m) => {
         if (!this.net.isHost) return;
         this.runCmd(m.cmd);
@@ -152,6 +149,9 @@ export class Multiplayer {
     });
     this.installation.onShared = (patch) => this.net.send({ t: 'state', ...patch });
   }
+
+  /** Time of day is shared: everyone in the room sees the same light. */
+  shareTime(mode) { this.net.send({ t: 'state', time: mode }); }
 
   get id() { return this.net.id; }
   get online() { return this.net.online; }
@@ -191,6 +191,7 @@ export class Multiplayer {
     if (cmd === 'add') this.crowd.spawnFast();
     else if (cmd === 'group') this.crowd.spawnGroup(4);
     else if (cmd === 'clear') this.crowd.clear();
+    else if (cmd === 'remove') this.crowd.removeOne();
   }
 
   /** Send a chat message; returns false when offline (the message is still shown locally). */
@@ -202,7 +203,7 @@ export class Multiplayer {
 
   people() {
     const out = [];
-    for (const r of this.remotes.values()) if (r.hasData) out.push(r);
+    for (const r of this.remotes.values()) if (r.hasData && !r.hidden) out.push(r);
     for (const g of this.guests.values()) if (g.hasData && performance.now() - g.lastMsg < 1500) out.push(g);
     return out;
   }
@@ -215,9 +216,17 @@ export class Multiplayer {
     if (this.sendT <= 0) {
       this.sendT = 1 / SEND_HZ;
       const p = this.player;
-      const msg = { t: 'p', x: round(p.pos.x), z: round(p.pos.z), h: round(p.heading), y: round(p.rig.offset.y), q: packRig(p.rig, JOINTS) };
-      if (guest) msg.gs = { x: round(guest.pos.x), z: round(guest.pos.z), h: round(guest.heading), y: 0, q: packRig(guest.rig, JOINTS) };
-      this.net.send(msg);
+      if (this.spectator) {
+        // spectators have no character: tell the others to hide it
+        this.net.send({ t: 'p', hidden: 1 });
+        this.sendT = 1;
+      } else {
+        const msg = { t: 'p', x: round(p.pos.x), z: round(p.pos.z), h: round(p.heading), y: round(p.rig.offset.y), q: packRig(p.rig, JOINTS) };
+        if (p.gesture) { msg.g = p.gesture; msg.gt = round(p.gestureT); } // the avatar on the screen answers gestures with its own moves
+        if (p.wantsHands) msg.hh = 1; // holding a hand out
+        if (guest) msg.gs = { x: round(guest.pos.x), z: round(guest.pos.z), h: round(guest.heading), y: 0, q: packRig(guest.rig, JOINTS) };
+        this.net.send(msg);
+      }
     }
     if (this.net.isHost) {
       this.npcT -= dt;

@@ -74,7 +74,7 @@ export class Speech {
     const sprite = bubbleSprite(text, { name, accent });
     const scale = person.rig.style.scale ?? 1;
     // above the name tag if the person has one
-    sprite.position.set(0, 2.05 * scale + (person.isRemote ? 0.2 : 0.05), 0);
+    sprite.position.set(0, 2.05 * scale + (person.isRemote || person.tag ? 0.2 : 0.05), 0);
     person.rig.root.add(sprite);
     const dur = seconds ?? Math.min(9, 3.5 + text.length * 0.06);
     this.active.set(person.id, { sprite, until: performance.now() + dur * 1000, person });

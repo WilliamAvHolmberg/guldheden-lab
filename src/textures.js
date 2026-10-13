@@ -320,6 +320,40 @@ export function posterTexture() {
  * audience), canvas y = depth: top edge is next to the screen, bottom edge is where people step on.
  * 1 px = 6.25 mm (2048 px = 12.8 m wide, 1120 px = 7 m deep).
  */
+/** One shoe print pointing up (towards the screen): wide forefoot in front, smaller heel behind. */
+function drawFoot(ctx, x, y, s = 1, side = 1) {
+  ctx.beginPath(); ctx.ellipse(x, y - 18 * s, 15 * s, 27 * s, side * 0.1, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x - side * 2 * s, y + 25 * s, 10 * s, 12 * s, 0, 0, Math.PI * 2); ctx.fill();
+}
+/** A pair of shoe prints (one person) centred on x, y. */
+function footPair(ctx, x, y, s = 1) {
+  drawFoot(ctx, x - 24 * s, y + 6 * s, s, 1);
+  drawFoot(ctx, x + 24 * s, y, s, -1);
+}
+
+/**
+ * Where the painted footprints are on the stage floor, in screen-local metres
+ * (x towards the screen, z lateral). Used to light them up and for the talk/dance spots.
+ */
+export const STAGE_FLOOR = { W: 2048, H: 1120, PX: 2048 / 12.8 };
+const FOOT_SPOTS_PX = {
+  talk: [[0.27 * 2048 - 70, 0.5 * 1120], [0.27 * 2048 + 70, 0.5 * 1120]],
+  dance: [[0.73 * 2048 - 120, 0.5 * 1120 + 30], [0.73 * 2048, 0.5 * 1120 - 40], [0.73 * 2048 + 120, 0.5 * 1120 + 30]],
+};
+export function footSpots(stage) {
+  const { W, PX } = STAGE_FLOOR;
+  const conv = ([x, y]) => ({ x: stage.x1 - y / PX, z: (x - W / 2) / PX });
+  return { talk: FOOT_SPOTS_PX.talk.map(conv), dance: FOOT_SPOTS_PX.dance.map(conv) };
+}
+
+/** White shoe-print pair on transparent background – the glow overlay for one footprint spot. */
+export function footPairTexture() {
+  const S = 128, c = makeCanvas(S, S), ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  footPair(ctx, S / 2, S / 2 + 6, 1.05);
+  return toTexture(c, { wrap: false });
+}
+
 export function stageFloorTexture() {
   const W = 2048, H = 1120, PX = 2048 / 12.8, rand = rng(31);
   const c = makeCanvas(W, H), ctx = c.getContext('2d');
@@ -359,12 +393,7 @@ export function stageFloorTexture() {
   ctx.textAlign = 'center';
   ctx.font = 'bold 120px Helvetica, Arial';
   ctx.fillText('STEP IN', W / 2, H - 70);
-  // a shoe-print pair pointing up (towards the screen): wide forefoot in front, smaller heel behind
-  const foot = (x, y, s = 1, side = 1) => {
-    ctx.beginPath(); ctx.ellipse(x, y - 18 * s, 15 * s, 27 * s, side * 0.1, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(x - side * 2 * s, y + 25 * s, 10 * s, 12 * s, 0, 0, Math.PI * 2); ctx.fill();
-  };
-  const pair = (x, y) => { foot(x - 24, y + 6, 1, 1); foot(x + 24, y, 1, -1); };
+  const pair = (x, y) => footPair(ctx, x, y);
   ctx.fillStyle = 'rgba(241,196,83,0.92)';
   // two people close together → they chat
   const talkX = W * 0.27, talkY = H * 0.5;
@@ -457,8 +486,22 @@ export function backPanelTexture() {
  * a large rectangle of pale, irregular natural-stone flags framed by a darker band of small setts.
  * The texture covers one field of `wm` × `hm` metres and tiles into the grid of big rectangles.
  */
-export function plazaField1944Texture(wm = 6, hm = 4, border = 0.38) {
-  const PPM = 200, W = Math.round(wm * PPM), H = Math.round(hm * PPM), rand = rng(1944);
+export function plazaField1944Texture(wm = 6, hm = 4, border = 0.38, fx = 1, fy = 1) {
+  // several fields per tile, each in its own stone tone (light / grey / warm), as in the photos
+  if (fx * fy > 1) {
+    const PPM = 140, FW = Math.round(wm * PPM), FH = Math.round(hm * PPM);
+    const c = makeCanvas(FW * fx, FH * fy), ctx = c.getContext('2d');
+    const tones = [[214, 206, 188], [188, 184, 174], [200, 190, 170], [218, 210, 194]];
+    for (let j = 0; j < fy; j++) for (let i = 0; i < fx; i++) {
+      ctx.drawImage(plazaFieldCanvas(wm, hm, border, PPM, tones[(i + j * 3) % tones.length], 1944 + i * 7 + j * 13), i * FW, j * FH);
+    }
+    return c;
+  }
+  return plazaFieldCanvas(wm, hm, border, 200, [214, 206, 188], 1944);
+}
+
+function plazaFieldCanvas(wm, hm, border, PPM, base, seed) {
+  const W = Math.round(wm * PPM), H = Math.round(hm * PPM), rand = rng(seed);
   const c = makeCanvas(W, H), ctx = c.getContext('2d');
   // irregular flags (~1 m) via a jittered grid + nearest-two-points joints
   const nx = Math.round(wm / 0.95), ny = Math.round(hm / 0.95), cw = W / nx, ch = H / ny;
@@ -480,7 +523,7 @@ export function plazaField1944Texture(wm = 6, hm = 4, border = 0.38) {
       }
       const edge = Math.sqrt(d2) - Math.sqrt(d1);
       const k = (y * W + x) * 4, t = best.tone;
-      let r = 214 + t * 16, g = 206 + t * 14, b = 188 + t * 12;
+      let r = base[0] + t * 16, g = base[1] + t * 14, b = base[2] + t * 12;
       if (edge < 3) { const f = 1 - edge / 3; r -= 40 * f; g -= 40 * f; b -= 38 * f; }
       d[k] = r; d[k + 1] = g; d[k + 2] = b; d[k + 3] = 255;
     }
@@ -544,4 +587,110 @@ export function lawn1944Texture() {
   }
   noise(ctx, S, S, 10, rand, false);
   return c;
+}
+
+/** A floating name label (sprite) shown above people on the square. */
+export function nameTag(text, color = '#f1c453') {
+  const c = makeCanvas(256, 64), ctx = c.getContext('2d');
+  ctx.font = 'bold 30px system-ui, sans-serif';
+  const w = Math.min(248, ctx.measureText(text).width + 28);
+  ctx.fillStyle = 'rgba(10,12,14,0.72)';
+  ctx.beginPath(); ctx.roundRect(128 - w / 2, 8, w, 46, 23); ctx.fill();
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.fillText(text, 128, 42);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: toTexture(c, { wrap: false }), depthWrite: false, transparent: true, toneMapped: false }));
+  sp.scale.set(1.0, 0.25, 1);
+  sp.renderOrder = 10;
+  return sp;
+}
+
+/**
+ * 1944 screen: a lit shop window seen from the square (after the group's reference photos):
+ * 'konditori' – cakes on stands behind lace curtains, 'tobak' – shelves of cigar boxes and
+ * newspapers, 'manufaktur' – mannequins in a dressing gown and a suit, rolls of fabric.
+ */
+export function shopWindowTexture(kind) {
+  const W = 512, H = 336, rand = rng(kind.length * 97);
+  const c = makeCanvas(W, H), ctx = c.getContext('2d');
+  const grd = ctx.createLinearGradient(0, 0, 0, H);
+  const lit = { konditori: ['#fbecc9', '#d9b98a'], tobak: ['#9a6b43', '#4e3220'], manufaktur: ['#ece6da', '#bfb6a6'] }[kind];
+  grd.addColorStop(0, lit[0]); grd.addColorStop(1, lit[1]);
+  ctx.fillStyle = grd; ctx.fillRect(0, 0, W, H);
+  const ell = (x, y, rx, ry, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); };
+  if (kind === 'konditori') {
+    // pendant lamp, lace curtains, cakes on a glass shelf and a tiered stand, trays of pastries
+    ell(W / 2, 40, 46, 14, '#fff7dc');
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    for (const x0 of [0, W - 70]) for (let k = 0; k < 6; k++) ctx.fillRect(x0 + k * 12, 0, 7, H);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(70, 150, W - 140, 6);
+    const cakes = ['#f3c6d0', '#fffaf0', '#6b3a22', '#f7e3a1', '#e88fa6'];
+    for (let i = 0; i < 4; i++) {
+      const x = 120 + i * 90, col = cakes[i % cakes.length];
+      ctx.fillStyle = '#e8d9bd'; ctx.fillRect(x - 34, 118, 68, 32);
+      ell(x, 118, 34, 9, col);
+      ell(x, 112, 6, 6, '#c62a3a');
+    }
+    // tiered stand
+    ctx.fillStyle = '#d8d8d8'; ctx.fillRect(W / 2 - 3, 190, 6, 90);
+    for (const [y, r] of [[200, 40], [240, 62], [280, 84]]) {
+      ell(W / 2, y, r, 7, '#f2f2f2');
+      for (let k = 0; k < r / 14; k++) ell(W / 2 - r + 12 + k * 28, y - 7, 9, 7, cakes[(k + y) % cakes.length]);
+    }
+    ctx.fillStyle = '#fffaf0'; ctx.fillRect(40, 300, W - 80, 36);
+    for (let k = 0; k < 14; k++) ell(60 + k * 30, 302, 11, 6, ['#d8a35a', '#f3c6d0', '#6b3a22'][k % 3]);
+  } else if (kind === 'tobak') {
+    // wooden shelves full of colourful boxes, a newspaper rack, a counter
+    for (let row = 0; row < 4; row++) {
+      const y = 40 + row * 62;
+      ctx.fillStyle = '#3a2416'; ctx.fillRect(30, y + 44, W - 60, 6);
+      let x = 36;
+      while (x < W - 60) {
+        const w = 18 + rand() * 26, h = 22 + rand() * 20;
+        ctx.fillStyle = ['#c62a3a', '#f1c453', '#2a5d8a', '#e9e3d2', '#2d5a39', '#b5682a'][Math.floor(rand() * 6)];
+        ctx.fillRect(x, y + 44 - h, w - 3, h);
+        x += w;
+      }
+    }
+    ctx.fillStyle = '#f4f1ea';
+    for (let k = 0; k < 5; k++) { ctx.save(); ctx.translate(70 + k * 26, 300); ctx.rotate(-0.08 + k * 0.04); ctx.fillRect(-20, -46, 40, 52); ctx.restore(); }
+    ctx.fillStyle = '#5e3b24'; ctx.fillRect(220, 270, W - 250, 66);
+  } else {
+    // diamond-lattice backdrop, two mannequins, rolls of fabric, a ribbon banner
+    ctx.strokeStyle = 'rgba(160,150,135,0.5)'; ctx.lineWidth = 2;
+    for (let k = -8; k < 16; k++) { ctx.beginPath(); ctx.moveTo(k * 40, 0); ctx.lineTo(k * 40 + 220, 336); ctx.stroke(); ctx.beginPath(); ctx.moveTo(k * 40 + 220, 0); ctx.lineTo(k * 40, 336); ctx.stroke(); }
+    const mannequin = (x, coat, trim) => {
+      ell(x, 64, 17, 21, '#e9d2b6');
+      ctx.fillStyle = '#3a2a1a'; ctx.beginPath(); ctx.ellipse(x, 52, 18, 10, 0, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = coat; ctx.beginPath(); ctx.moveTo(x - 40, 96); ctx.lineTo(x + 40, 96); ctx.lineTo(x + 50, 300); ctx.lineTo(x - 50, 300); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = trim; ctx.fillRect(x - 6, 96, 12, 120);
+      ctx.fillStyle = '#f4f1ea'; ctx.beginPath(); ctx.moveTo(x - 14, 92); ctx.lineTo(x + 14, 92); ctx.lineTo(x, 122); ctx.closePath(); ctx.fill();
+    };
+    mannequin(110, '#2b2f3a', '#7a1f2b');
+    mannequin(W - 110, '#4a3a2e', '#c9b48a');
+    ctx.fillStyle = '#fffaf0'; ctx.save(); ctx.translate(W / 2, 130); ctx.rotate(-0.25); ctx.fillRect(-120, -16, 240, 32); ctx.restore();
+    ctx.fillStyle = '#7a1f2b'; ctx.font = 'italic bold 22px Georgia, serif'; ctx.textAlign = 'center';
+    ctx.save(); ctx.translate(W / 2, 137); ctx.rotate(-0.25); ctx.fillText('New fabrics in!', 0, 0); ctx.restore();
+    for (let k = 0; k < 5; k++) { ctx.fillStyle = ['#c9b48a', '#6d7f9a', '#a8302a', '#e9e3d2', '#3f5a4a'][k]; ctx.fillRect(176 + k * 34, 230, 28, 80); }
+    ctx.fillStyle = '#d9d2c4'; ctx.fillRect(0, 306, W, 30);
+  }
+  // window glass: frame bars + a soft reflection
+  ctx.fillStyle = '#2a2622'; ctx.fillRect(0, 0, W, 8); ctx.fillRect(0, H - 8, W, 8); ctx.fillRect(0, 0, 8, H); ctx.fillRect(W - 8, 0, 8, H);
+  ctx.fillRect(W / 2 - 3, 0, 6, H);
+  const refl = ctx.createLinearGradient(0, 0, W, H);
+  refl.addColorStop(0, 'rgba(255,255,255,0.18)'); refl.addColorStop(0.35, 'rgba(255,255,255,0)'); refl.addColorStop(0.7, 'rgba(255,255,255,0.08)'); refl.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = refl; ctx.fillRect(0, 0, W, H);
+  return toTexture(c, { wrap: false });
+}
+
+/** Neon-ish script sign on the restaurant roof ("Guldheden", as in the 1940s photos). */
+export function scriptSignTexture(text) {
+  const W = 1024, H = 256, c = makeCanvas(W, H), ctx = c.getContext('2d');
+  ctx.font = 'italic bold 170px "Brush Script MT", "Segoe Script", "Snell Roundhand", cursive';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineWidth = 14; ctx.strokeStyle = 'rgba(40,36,30,0.85)';
+  ctx.strokeText(text, W / 2, H / 2 + 8);
+  ctx.fillStyle = '#fbf7ec';
+  ctx.fillText(text, W / 2, H / 2 + 8);
+  return toTexture(c, { wrap: false });
 }

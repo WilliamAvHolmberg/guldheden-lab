@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Guldhedstorget — The Interactive Archive (simulation)</title>
+  <title>The Interactive Archive at Guldhedstorget (simulation)</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
   <div id="start">
     <div class="card">
       <div class="eyebrow">Energy group · Design-in-Action · Chalmers</div>
-      <h1>The Interactive Archive</h1>
+      <h1>The Interactive Archive <span>at Guldhedstorget</span></h1>
       <p class="lead">A walkable simulation of the installation on <b>Guldhedstorget</b>, Gothenburg. A freestanding LED wall out on the square, facing the big street, turns everyone who steps onto the stage into a historical figure from the square that copies their movements. The more neighbours there are, the more colour, light and music.</p>
       <div class="grid">
         <div><kbd>W A S D</kbd> walk · <kbd>Shift</kbd> run · drag to look · scroll to zoom</div>
@@ -24,6 +24,7 @@
       <div class="join">
         <input id="name" maxlength="24" placeholder="Your name (shown to others)" autocomplete="off" />
         <button id="enter">Enter the square</button>
+        <button id="watch" class="ghost">Watch as spectator</button>
       </div>
       <div class="room" id="roomInfo"></div>
       <div class="loading" id="loading">Building Guldhedstorget…</div>
@@ -33,13 +34,57 @@
   <div id="hud" hidden>
 
     <div id="tools">
+      <button data-act="spectate" id="specBtn"><i>O</i> Spectator</button>
       <button data-act="add"><i>N</i> + Visitor</button>
+      <button data-act="remove"><i>B</i> − Visitor</button>
       <button data-act="clear">Clear square</button>
       <button data-act="time" id="timeBtn"><i>T</i> Day</button>
       <button data-act="sit" id="sitBtn"><i>E</i> Sit down</button>
       <button data-act="sound" id="soundBtn"><i>M</i> Sound on</button>
     </div>
 
+    <div id="keys">
+      <div class="kh">Controls <span><kbd>H</kbd> <em>hide</em></span></div>
+      <div class="spec"><kbd>W A S D</kbd> fly</div>
+      <div class="spec"><kbd>E</kbd> / <kbd>Space</kbd> up · <kbd>Q</kbd> down</div>
+      <div class="spec">scroll · glide forward / back</div>
+      <div class="spec"><kbd>Shift</kbd> fly faster</div>
+      <div class="spec">drag mouse · look around (also up and down)</div>
+      <div class="spec"><kbd>T</kbd> time of day (for everyone)</div>
+      <div class="spec"><kbd>N</kbd> / <kbd>B</kbd> add / remove a visitor</div>
+      <div class="spec"><kbd>V</kbd> screen feed</div>
+      <div class="spec"><kbd>O</kbd> back to your character</div>
+      <div class="play"><kbd>W A S D</kbd> walk</div>
+      <div class="play"><kbd>Shift</kbd> sprint</div>
+      <div class="play"><kbd>Space</kbd> jump</div>
+      <div class="play"><kbd>1</kbd>–<kbd>8</kbd> gestures</div>
+      <div class="play"><kbd>X</kbd> hold hands (someone near must too)</div>
+      <div class="play"><kbd>E</kbd> sit on a bench / stand up</div>
+      <div class="play"><kbd>F</kbd> face the screen</div>
+      <div class="play">drag mouse · look around</div>
+      <div class="play">scroll · zoom camera</div>
+      <div class="play"><kbd>V</kbd> screen feed (small / large)</div>
+      <div class="play"><kbd>T</kbd> time of day (for everyone)</div>
+      <div class="play"><kbd>O</kbd> spectator mode</div>
+      <div class="play"><kbd>N</kbd> add a visitor</div>
+      <div class="play"><kbd>C</kbd> webcam pose</div>
+      <div class="play"><kbd>K</kbd> sensor view</div>
+      <div class="play"><kbd>M</kbd> sound on / off</div>
+    </div>
+    <div id="spectator" hidden>
+      <div class="sh"><span>Spectator mode</span><button id="specExit"><i>O</i> Back to the square</button></div>
+      <label>Time of day <small>(for everyone)</small></label>
+      <div class="seg" id="specTime"><button data-time="day">Day</button><button data-time="dusk">Dusk</button><button data-time="night">Night</button></div>
+      <label for="specMusic">Soundtrack <small>(on this computer)</small></label>
+      <select id="specMusic">
+        <option value="">Automatic – follows the stage</option>
+        <option value="soft-1">Soft song 1</option><option value="soft-2">Soft song 2</option><option value="soft-3">Soft song 3</option>
+        <option value="fast-1">Fast song 1</option><option value="fast-2">Fast song 2</option><option value="fast-3">Fast song 3</option>
+        <option value="off">Off</option>
+      </select>
+      <label>Visitors on the square: <b id="specCount">0</b></label>
+      <div class="seg" id="specNpc"><button data-npc="add">+ Visitor</button><button data-npc="group">+ Group</button><button data-npc="remove">− Visitor</button><button data-npc="clear">Clear</button></div>
+    </div>
     <div id="gestures"></div>
     <div id="hint"></div>
 

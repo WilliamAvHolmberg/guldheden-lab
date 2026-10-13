@@ -708,3 +708,332 @@ export function animTalk(rig, t, speaking, seed = 0) {
     rig.set('fArmL', -1.6, 0, 0);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Avatar actions (feedback v4): the avatar on the screen is a character of its own. When the person
+// does a gesture, the avatar answers with a bigger, more theatrical move of its own, played out in full.
+// ---------------------------------------------------------------------------
+
+/** Person's gesture → the avatar's own move. Gestures not listed are shown as they are. */
+export const AVATAR_FOR = { clap: 'heelclick', jump: 'highjump', wave: 'bigwave', bow: 'somersault', airplane: 'fly', dance: 'lindy' };
+export const AVATAR_ACTIONS = {
+  heelclick: { dur: 2.8 },
+  highjump: { dur: 2.0 },
+  bigwave: { dur: 3.2 },
+  somersault: { dur: 2.0 },
+  fly: { dur: 6.0 },
+  lindy: { dur: 6.0 },
+};
+
+const arc = (u, h) => 4 * u * (1 - u) * h; // jump height at 0..1 of the flight
+const phase = (t, a, b) => clamp01((t - a) / (b - a));
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+
+/** Bent knees for take-off and landing (c = 0..1). */
+function crouch(rig, c) {
+  rig.set('thighL', -0.85 * c, 0, 0.06);
+  rig.set('thighR', -0.85 * c, 0, -0.06);
+  rig.set('shinL', 1.4 * c, 0, 0);
+  rig.set('shinR', 1.4 * c, 0, 0);
+  rig.set('spine', 0.35 * c, 0, 0);
+  rig.set('uArmL', 0.5 * c, 0, 0.15);
+  rig.set('uArmR', 0.5 * c, 0, -0.15);
+  rig.offsetTarget.y = -0.2 * c;
+}
+
+/**
+ * Pose the rig for an avatar action at time t. Returns null when it is over, otherwise how the
+ * whole body moves: lift (m up), pitch (rad, + = forward flip), roll, yaw, side/fwd (m, in the
+ * avatar's own frame).
+ */
+export function animAvatar(rig, name, t) {
+  const def = AVATAR_ACTIONS[name];
+  if (!def || t > def.dur) return null;
+  const out = { lift: 0, pitch: 0, roll: 0, yaw: 0, side: 0, fwd: 0 };
+  switch (name) {
+    case 'heelclick': {
+      // first clap the hands a few times, then a little crouch, jump, click the heels together, land
+      const CLAP = 1.0;
+      if (t < CLAP) {
+        const e = Math.min(t / 0.2, (CLAP - t) / 0.15, 1);
+        const o = 0.5 + 0.5 * Math.sin(t * 15);
+        rig.set('uArmL', -1.0 * e, 0, (-0.25 - 0.25 * o) * e + 0.09 * (1 - e));
+        rig.set('uArmR', -1.0 * e, 0, (0.25 + 0.25 * o) * e - 0.09 * (1 - e));
+        rig.set('fArmL', -0.95 * e, 0, 0);
+        rig.set('fArmR', -0.95 * e, 0, 0);
+        rig.offsetTarget.y = 0.02 * Math.abs(Math.sin(t * 7.5)) * e;
+        break;
+      }
+      t -= CLAP;
+      if (t < 0.3) crouch(rig, phase(t, 0, 0.3));
+      else if (t < 1.2) {
+        const u = phase(t, 0.3, 1.2), k = Math.sin(Math.PI * u);
+        out.lift = arc(u, 0.6);
+        rig.set('thighL', -0.15 * k, 0, -0.35 * k);
+        rig.set('thighR', -0.15 * k, 0, -0.85 * k);
+        rig.set('shinL', 0.7 * k, 0, 0);
+        rig.set('shinR', 0.7 * k, 0, 0);
+        rig.set('footL', 0, 0, 0.3 * k);
+        rig.set('uArmL', -0.3 * k, 0, 2.7 * k);
+        rig.set('fArmL', 0, 0, 0.3 * k);
+        rig.set('uArmR', 0, 0, -0.7 * k);
+        rig.set('spine', 0, 0, 0.18 * k);
+        rig.set('head', -0.15 * k, 0, 0);
+      } else crouch(rig, 1 - phase(t, 1.2, 1.8));
+      break;
+    }
+    case 'highjump': {
+      // deep crouch, a really high jump with knees tucked at the top, arms flung up
+      if (t < 0.4) crouch(rig, phase(t, 0, 0.4) * 1.1);
+      else if (t < 1.5) {
+        const u = phase(t, 0.4, 1.5), k = Math.sin(Math.PI * u);
+        out.lift = arc(u, 1.3);
+        rig.set('thighL', -1.3 * k, 0, 0.1);
+        rig.set('thighR', -1.3 * k, 0, -0.1);
+        rig.set('shinL', 1.7 * k, 0, 0);
+        rig.set('shinR', 1.7 * k, 0, 0);
+        rig.set('uArmL', 0, 0, 2.9 * Math.min(1, k * 2));
+        rig.set('uArmR', 0, 0, -2.9 * Math.min(1, k * 2));
+        rig.set('head', -0.3 * k, 0, 0);
+      } else crouch(rig, 1 - phase(t, 1.5, 2.0));
+      break;
+    }
+    case 'bigwave': {
+      // the whole arm swings from side to side above the head, the body sways with it
+      const e = Math.min(t / 0.35, (def.dur - t) / 0.35, 1);
+      const s = Math.sin(t * 5.2);
+      rig.set('uArmR', 0, 0, (-2.85 - 0.45 * s) * e);
+      rig.set('fArmR', 0, 0, -0.15 * s * e);
+      rig.set('handR', 0, 0, 0.35 * s * e);
+      rig.set('uArmL', 0, 0, 0.35 * e);
+      rig.set('fArmL', -0.4 * e, 0, 0);
+      rig.set('spine', 0, 0, 0.1 * s * e);
+      rig.set('chest', 0, 0, 0.08 * s * e);
+      rig.set('head', -0.12 * e, 0, -0.1 * s * e);
+      rig.offsetTarget.y = 0.03 * Math.abs(Math.sin(t * 5.2)) * e;
+      break;
+    }
+    case 'somersault': {
+      // crouch, jump, a full forward flip in a tuck, land
+      if (t < 0.4) crouch(rig, phase(t, 0, 0.4));
+      else if (t < 1.4) {
+        const u = phase(t, 0.4, 1.4), k = Math.min(1, Math.sin(Math.PI * u) * 1.6);
+        out.lift = arc(u, 0.8) + 0.25 * k;
+        out.pitch = Math.PI * 2 * (u * u * (3 - 2 * u));
+        rig.set('thighL', -1.7 * k, 0, 0.06);
+        rig.set('thighR', -1.7 * k, 0, -0.06);
+        rig.set('shinL', 2.1 * k, 0, 0);
+        rig.set('shinR', 2.1 * k, 0, 0);
+        rig.set('spine', 0.5 * k, 0, 0);
+        rig.set('head', 0.4 * k, 0, 0);
+        rig.set('uArmL', -1.1 * k, 0, 0.25);
+        rig.set('uArmR', -1.1 * k, 0, -0.25);
+        rig.set('fArmL', -1.2 * k, 0, 0);
+        rig.set('fArmR', -1.2 * k, 0, 0);
+      } else crouch(rig, 1 - phase(t, 1.4, 2.0));
+      break;
+    }
+    case 'fly': {
+      // take off, fly a loop over the square like a plane (arms out, banking), land again
+      const up = phase(t, 0.3, 1.5), down = phase(t, 4.6, 5.8);
+      const air = ease3(up) * (1 - ease3(down));
+      if (t < 0.3) crouch(rig, phase(t, 0, 0.3));
+      const loop = phase(t, 1.2, 5.0);
+      const a = loop * Math.PI * 2;
+      out.lift = 1.6 * air + 0.15 * Math.sin(t * 3) * air;
+      out.side = Math.sin(a) * 1.6 * air;
+      out.fwd = (Math.cos(a) - 1) * 0.9 * air;
+      out.yaw = Math.atan2(Math.cos(a) * 1.6, -Math.sin(a) * 0.9) * air; // face the way it flies
+      out.pitch = 1.15 * air;
+      out.roll = -0.45 * Math.sin(a + 0.6) * air;
+      rig.set('uArmL', 0, 0, 1.5 * air);
+      rig.set('uArmR', 0, 0, -1.5 * air);
+      rig.set('thighL', 0.15 * air, 0, 0.04);
+      rig.set('thighR', 0.15 * air, 0, -0.04);
+      rig.set('head', -0.9 * air, 0, 0);
+      break;
+    }
+    case 'lindy': {
+      // Lindy Hop: bouncy triple steps, Charleston kicks, swinging arms, then "jazz hands"
+      const e = Math.min(t / 0.4, (def.dur - t) / 0.4, 1);
+      const beat = t / 0.375; // ~160 bpm
+      const bounce = Math.abs(Math.sin(Math.PI * beat));
+      const side = Math.floor(beat / 2) % 2 ? 1 : -1;
+      const kick = Math.max(0, Math.sin(Math.PI * (beat % 2) / 2)) ** 2;
+      const jazz = t > def.dur - 1.3;
+      rig.offsetTarget.y = -0.06 * bounce * e;
+      rig.set('hips', 0, 0.25 * Math.sin(Math.PI * beat / 2) * e, 0);
+      rig.set('spine', 0.18 * e, 0, 0);
+      const kL = side > 0 ? kick : 0, kR = side < 0 ? kick : 0;
+      rig.set('thighL', (-0.9 * kL - 0.25 * bounce * (1 - kL)) * e, 0, 0.08);
+      rig.set('thighR', (-0.9 * kR - 0.25 * bounce * (1 - kR)) * e, 0, -0.08);
+      rig.set('shinL', (0.15 * kL + 0.45 * bounce * (1 - kL)) * e, 0, 0);
+      rig.set('shinR', (0.15 * kR + 0.45 * bounce * (1 - kR)) * e, 0, 0);
+      if (jazz) {
+        const j = Math.min(1, (t - (def.dur - 1.3)) / 0.25) * e;
+        rig.set('uArmL', -0.3 * j, 0, 1.9 * j);
+        rig.set('uArmR', -0.3 * j, 0, -1.9 * j);
+        rig.set('fArmL', 0, 0, 0.6 * j);
+        rig.set('fArmR', 0, 0, -0.6 * j);
+        rig.set('handL', 0, 0.4 * Math.sin(t * 30) * j, 0);
+        rig.set('handR', 0, -0.4 * Math.sin(t * 30) * j, 0);
+      } else {
+        rig.set('uArmL', (-0.7 * side) * e, 0, 0.5 * e);
+        rig.set('uArmR', (0.7 * side) * e, 0, -0.5 * e);
+        rig.set('fArmL', -1.3 * e, 0, 0);
+        rig.set('fArmR', -1.3 * e, 0, 0);
+      }
+      rig.set('head', 0, -0.2 * side * e, 0);
+      out.yaw = 0.25 * Math.sin(Math.PI * beat / 4) * e;
+      break;
+    }
+    default:
+      return null;
+  }
+  return out;
+}
+
+const ease3 = (x) => x * x * (3 - 2 * x);
+
+/** Pedalling on a bicycle (saddle ~0.85 m); ph = pedal angle. */
+export function animBike(rig, ph) {
+  const s = rig.style.scale ?? 1;
+  rig.offsetTarget.set(0, 0.86 / s - 0.93, 0);
+  rig.set('spine', 0.35, 0, 0);
+  rig.set('chest', 0.05, 0, 0);
+  rig.set('head', -0.35, 0, 0);
+  rig.set('uArmL', -1.05, 0, 0.12);
+  rig.set('uArmR', -1.05, 0, -0.12);
+  rig.set('fArmL', -0.35, 0, 0);
+  rig.set('fArmR', -0.35, 0, 0);
+  rig.set('thighL', -1.0 - 0.45 * Math.sin(ph), 0, 0.05);
+  rig.set('thighR', -1.0 - 0.45 * Math.sin(ph + Math.PI), 0, -0.05);
+  rig.set('shinL', 1.15 + 0.45 * Math.cos(ph), 0, 0);
+  rig.set('shinR', 1.15 + 0.45 * Math.cos(ph + Math.PI), 0, 0);
+}
+
+/** A 1940s bicycle (black frame, big wheels, a basket) along +Z, wheels on the ground. */
+export function makeBicycle(color = '#1c2a24') {
+  const g = new THREE.Group();
+  const frame = M(color, 0.4, 0.4), chrome = M('#cfcfcf', 0.25, 0.9), tyre = M('#151515', 0.8), leather = M('#4a2d1a', 0.6);
+  const wheelGeo = G('bikeWheel', () => new THREE.TorusGeometry(0.33, 0.022, 8, 28));
+  const spokeGeo = G('bikeSpokes', () => new THREE.CylinderGeometry(0.006, 0.006, 0.64, 4));
+  g.userData.wheels = [];
+  for (const z of [-0.52, 0.52]) {
+    const w = new THREE.Group();
+    w.position.set(0, 0.35, z);
+    const tire = new THREE.Mesh(wheelGeo, tyre);
+    tire.rotation.y = Math.PI / 2;
+    w.add(tire);
+    for (let k = 0; k < 4; k++) { const sp = new THREE.Mesh(spokeGeo, chrome); sp.rotation.x = (k / 4) * Math.PI; w.add(sp); }
+    g.add(w);
+    g.userData.wheels.push(w);
+  }
+  const bar = (a, b, mat, r = 0.022) => {
+    const v = new THREE.Vector3().subVectors(b, a);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, v.length(), 8), mat);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), v.normalize());
+    g.add(m);
+  };
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  bar(V(0, 0.35, -0.52), V(0, 0.42, 0.02), frame); // chain stay → bottom bracket
+  bar(V(0, 0.42, 0.02), V(0, 0.8, -0.22), frame); // seat tube
+  bar(V(0, 0.8, -0.22), V(0, 0.35, -0.52), frame); // seat stay
+  bar(V(0, 0.42, 0.02), V(0, 0.78, 0.38), frame); // down tube
+  bar(V(0, 0.8, -0.22), V(0, 0.82, 0.36), frame); // top tube
+  bar(V(0, 0.35, 0.52), V(0, 0.95, 0.4), frame); // fork + head tube
+  bar(V(-0.24, 0.98, 0.36), V(0.24, 0.98, 0.36), chrome, 0.014); // handlebar
+  const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.05, 0.24), leather);
+  saddle.position.set(0, 0.86, -0.24);
+  g.add(saddle);
+  const basket = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.22), M('#a0784a', 0.9));
+  basket.position.set(0, 0.92, 0.55);
+  g.add(basket);
+  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+// ---------------------------------------------------------------------------
+// Holding hands (feedback v5)
+// ---------------------------------------------------------------------------
+
+/** Reach one arm out sideways and a little forward to hold a neighbour's hand ('L' or 'R'). */
+export function animHoldHand(rig, side, amt = 1) {
+  const s = side === 'L' ? 1 : -1;
+  rig.set('uArm' + side, -0.25 * amt, 0, s * 0.5 * amt);
+  rig.set('fArm' + side, -0.25 * amt, 0, s * 0.15 * amt);
+  rig.set('hand' + side, 0, 0, 0);
+}
+
+/**
+ * A set dance for three or more holding hands in a line, the same steps for everyone (synced by the
+ * shared time t): four beats of side-steps with kicks, then four beats of raising the joined hands
+ * and bobbing. joinL / joinR: is there a neighbour holding this hand. Returns a sideways sway (m)
+ * the whole line shares.
+ */
+export function animSetDance(rig, t, joinL, joinR) {
+  const beat = t / 0.5; // 120 bpm
+  const phrase = beat % 8;
+  const step = Math.floor(beat) % 2 ? 1 : -1;
+  const bounce = Math.abs(Math.sin(Math.PI * beat));
+  rig.offsetTarget.y = -0.05 * bounce;
+  if (phrase < 4) {
+    // side-step + kick: the free leg kicks across on every other beat
+    const k = Math.max(0, Math.sin(Math.PI * (beat % 1)));
+    rig.set('thighL', step > 0 ? -0.55 * k : -0.1, 0, 0.08);
+    rig.set('thighR', step < 0 ? -0.55 * k : -0.1, 0, -0.08);
+    rig.set('shinL', step > 0 ? 0.1 : 0.3 * bounce, 0, 0);
+    rig.set('shinR', step < 0 ? 0.1 : 0.3 * bounce, 0, 0);
+    if (joinL) animHoldHand(rig, 'L');
+    if (joinR) animHoldHand(rig, 'R');
+  } else {
+    // raise the joined hands high, then bring them down, bobbing on the knees
+    const up = Math.sin(Math.PI * ((phrase - 4) / 4));
+    for (const [side, s, joined] of [['L', 1, joinL], ['R', -1, joinR]]) {
+      if (!joined) continue;
+      rig.set('uArm' + side, -0.15, 0, s * (0.5 + 2.0 * up));
+      rig.set('fArm' + side, 0, 0, s * 0.15);
+    }
+    rig.set('thighL', -0.3 * bounce, 0, 0.06);
+    rig.set('thighR', -0.3 * bounce, 0, -0.06);
+    rig.set('shinL', 0.55 * bounce, 0, 0);
+    rig.set('shinR', 0.55 * bounce, 0, 0);
+    rig.set('head', -0.15 * up, 0, 0);
+  }
+  if (!joinL) rig.set('uArmL', 0, 0, 0.35); // a free hand rests on the hip
+  if (!joinR) rig.set('uArmR', 0, 0, -0.35);
+  if (!joinL) rig.set('fArmL', -1.6, 0, 0);
+  if (!joinR) rig.set('fArmR', -1.6, 0, 0);
+  rig.set('spine', 0.06, 0, 0.06 * step * (phrase < 4 ? 1 : 0));
+  return phrase < 4 ? 0.18 * Math.sin((Math.PI * beat) / 2) : 0;
+}
+
+/** A flower (stem, leaves, petals) that grows out of joined hands; scale it from 0 to 1 to grow it. */
+export function makeFlower(petal = '#e9677a') {
+  const g = new THREE.Group();
+  const stem = new THREE.Mesh(G('flStem', () => new THREE.CylinderGeometry(0.01, 0.014, 0.34, 6).translate(0, 0.17, 0)), M('#4f7f3a', 0.8));
+  g.add(stem);
+  for (const [x, rz] of [[0.04, -0.9], [-0.04, 0.9]]) {
+    const leaf = new THREE.Mesh(G('flLeaf', () => new THREE.SphereGeometry(1, 8, 6)), M('#5f9a42', 0.8));
+    leaf.scale.set(0.05, 0.016, 0.025);
+    leaf.position.set(x, 0.12 + (x > 0 ? 0 : 0.06), 0);
+    leaf.rotation.z = rz;
+    g.add(leaf);
+  }
+  const head = new THREE.Group();
+  head.position.y = 0.36;
+  for (let k = 0; k < 6; k++) {
+    const p = new THREE.Mesh(G('flPetal', () => new THREE.SphereGeometry(1, 8, 6)), M(petal, 0.6));
+    const a = (k / 6) * Math.PI * 2;
+    p.scale.set(0.045, 0.018, 0.028);
+    p.position.set(Math.cos(a) * 0.045, 0, Math.sin(a) * 0.045);
+    p.rotation.y = -a;
+    head.add(p);
+  }
+  head.add(new THREE.Mesh(G('flCentre', () => new THREE.SphereGeometry(0.022, 8, 6)), M('#f1c453', 0.5)));
+  head.rotation.x = 0.5; // the bloom faces the audience
+  g.add(head);
+  g.userData.head = head;
+  return g;
+}

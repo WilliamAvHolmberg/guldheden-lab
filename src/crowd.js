@@ -1,12 +1,8 @@
 import * as THREE from 'three';
-import { Rig, modernStyle, animIdle, animWalk, animGesture, animSit, GESTURES } from './character.js';
-import { resolveCollisions, LAYOUT, headingToScreen, onStage, screenToWorld } from './world.js';
-import { rng } from './textures.js';
+import { Rig, modernStyle, animIdle, animWalk, animGesture, animSit, animHoldHand, GESTURES } from './character.js';
+import { resolveCollisions, LAYOUT, headingToScreen, onStage, screenToWorld, toScreenLocal, STAGE } from './world.js';
+import { rng, nameTag } from './textures.js';
 
-const NAMES = [
-  'Anna', 'Erik', 'Maja', 'Omar', 'Karin', 'Lars', 'Sara', 'Ali', 'Ingrid', 'Jonas', 'Elsa', 'Nils',
-  'Fatima', 'Gustav', 'Aya', 'Bertil', 'Linnea', 'Sven', 'Mira', 'Hassan', 'Birgitta', 'Oskar', 'Leila', 'Göran',
-];
 
 const SPAWNS = [
   () => new THREE.Vector3(-30 + Math.random() * 50, 0, 24 + Math.random() * 2),
@@ -31,12 +27,6 @@ const ENTRANCES = [
   () => screenToWorld(-4, 13.8),
 ];
 
-const LINES = {
-  adult: ['Look, it’s the old square!', 'Come on, let’s get closer!', 'Which figure am I?', 'Haha, it copies me!', 'We need more people for colour!', 'Lovely lights tonight'],
-  elderly: ['The dance hall used to be right here.', 'That’s exactly how it looked in 1944!', 'I remember the bakery on the corner.', 'My mother did her shopping just there.', 'How lovely to see the square alive again', 'Come and sit down for a while!'],
-  child: ['Look, I’m flying!', 'Grandma, you’re a tram conductor!', 'My drawing is on the screen!', 'Again, again!', 'We’re dancing!'],
-};
-
 function insideObstacle(p, obstacles, r = 0.5) {
   for (const o of obstacles) {
     if (o.t === 'circle') { if (Math.hypot(p.x - o.x, p.z - o.z) < o.r + r) return true; }
@@ -46,6 +36,18 @@ function insideObstacle(p, obstacles, r = 0.5) {
 }
 
 /** Waypoints from a to b that respect the chain line and the building layout. */
+/**
+ * The nearest point on the stage floor (with a margin from its edges). The screen stands turned 90°
+ * on the square, so "sideways along the stage" is not world x or z – always work in screen-local
+ * coordinates and convert back.
+ */
+export function onStagePoint(p, margin = 0.6) {
+  const l = toScreenLocal(p);
+  const c = (v, a, b) => Math.max(a, Math.min(b, v));
+  const side = margin + 0.7; // keep clear of the benches along the stage's side edges
+  return screenToWorld(c(l.x, STAGE.x0 + margin, STAGE.x1 - margin), c(l.z, STAGE.z0 + side, STAGE.z1 - side));
+}
+
 export function route(a, b) {
   const pts = [];
   const CZ = LAYOUT.chainZ;
@@ -60,6 +62,12 @@ export function route(a, b) {
     }
   }
   if (!north(a) && north(b)) pts.push(new THREE.Vector3(16.5, 0, -18), new THREE.Vector3(17.5, 0, -21));
+  // onto the stage from the side or from behind the screen: go round to the front edge first,
+  // instead of walking into the benches along the sides
+  if (!onStage(a) && onStage(b)) {
+    const la = toScreenLocal(a);
+    if (Math.abs(la.z) > STAGE.z1 - 0.5 || la.x > STAGE.x1) pts.push(screenToWorld(STAGE.x0 - 0.9, Math.max(-5, Math.min(5, la.z))));
+  }
   pts.push(b.clone());
   return pts;
 }
@@ -73,7 +81,7 @@ export class Crowd {
     this.onEvent = onEvent;
     this.agents = [];
     this.rand = rng(77);
-    this.nameIdx = 0;
+    this.nameIdx = 1;
   }
 
   randomPoint(area = SQUARE) {
@@ -91,20 +99,26 @@ export class Crowd {
     const style = modernStyle(rng(seed), kind);
     const rig = new Rig(style);
     this.scene.add(rig.root);
+    const label = name ?? `Neighbour ${this.nameIdx++}`;
     const pos = at ? at.clone() : SPAWNS[Math.floor(Math.random() * SPAWNS.length)]();
     const a = {
       seed,
       netPos: pos.clone(),
       netHeading: 0,
       id: id ?? `npc-${Math.random().toString(36).slice(2, 8)}-${NEXT_ID++}`,
-      name: name ?? NAMES[this.nameIdx++ % NAMES.length],
+      name: label,
+      tag: null,
       kind, rig, pos, heading: 0, isPlayer: false,
       speed: kind === 'elderly' ? 0.75 + Math.random() * 0.2 : kind === 'child' ? 1.35 : 1.15 + Math.random() * 0.3,
       vel: new THREE.Vector3(), phase: Math.random() * 10,
       state: 'walk', waypoints: [], next: null, timer: 0, gesture: null, gestureT: 0,
       nextGesture: 2 + Math.random() * 3, bornAt: performance.now() / 1000, stuck: 0, lastDist: 1e9,
-      hurry, sayCd: 6 + Math.random() * 14, sayId: 0, sitting: false,
+      hurry, sitting: false,
     };
+    // every NPC carries its name above its head
+    a.tag = nameTag(label, '#e8edf2');
+    a.tag.position.set(0, 2.05 * (style.scale ?? 1), 0);
+    rig.root.add(a.tag);
     if (goScreen) this.goScreen(a, near);
     else this.goWander(a);
     this.agents.push(a);
@@ -146,8 +160,9 @@ export class Crowd {
 
   goScreen(a, near = null) {
     a.intent = 'screen';
-    let p = near ?? this.randomPoint(ENGAGE);
+    let p = onStagePoint(near ?? this.randomPoint(ENGAGE));
     if (insideObstacle(p, this.obstacles, 0.4)) p = this.randomPoint(ENGAGE);
+    a.stageTries = 0;
     this.setPath(a, p);
   }
 
@@ -158,8 +173,17 @@ export class Crowd {
 
   removeAgent(a) {
     if (a.seat) { a.seat.occupant = null; a.seat = null; }
+    a.tag?.material.map.dispose();
     a.rig.dispose();
     this.agents.splice(this.agents.indexOf(a), 1);
+  }
+
+  /** Remove one visitor – preferably someone who is not on the stage. */
+  removeOne() {
+    if (!this.agents.length) return;
+    const a = [...this.agents].reverse().find((x) => !onStage(x.pos) && !x.seat) ?? this.agents[this.agents.length - 1];
+    this.onEvent(`${a.name} leaves the square`, 'leave');
+    this.removeAgent(a);
   }
 
   clear() {
@@ -173,6 +197,11 @@ export class Crowd {
       a.state = 'sit';
       a.sitting = true;
       a.timer = 20 + Math.random() * 25;
+      return;
+    }
+    if ((a.intent === 'screen' || a.intent === 'approach') && !onStage(a.pos) && (a.stageTries ?? 0) < 3) {
+      a.stageTries = (a.stageTries ?? 0) + 1;
+      this.setPath(a, onStagePoint(a.pos, 0.9));
       return;
     }
     if (a.intent === 'screen') {
@@ -222,7 +251,7 @@ export class Crowd {
       id: a.id, n: a.name, k: a.kind, s: a.seed, x: r(a.pos.x), z: r(a.pos.z), h: r(a.heading),
       g: a.gesture, gt: a.gesture ? r(a.gestureT) : 0,
       st: a.sitting ? 1 : 0,
-      ...(a.sayUntil > performance.now() ? { sy: a.sayText, si: a.sayId } : {}),
+      ...(a.wantsHands ? { hh: 1 } : {}),
     }));
   }
 
@@ -241,7 +270,7 @@ export class Crowd {
       if (d.g && (a.gesture !== d.g || Math.abs(a.gestureT - d.gt) > 0.5)) { a.gesture = d.g; a.gestureT = d.gt; }
       if (!d.g && a.gesture && a.gestureT > 0.3) a.gesture = null;
       a.sitting = !!d.st;
-      if (d.si && d.si !== a.sayId) { a.sayId = d.si; this.onSay?.(a, d.sy); }
+      a.wantsHands = !!d.hh;
     }
     for (const a of [...this.agents]) if (!seen.has(a.id)) this.removeAgent(a);
   }
@@ -278,14 +307,46 @@ export class Crowd {
       a.gestureT += dt;
       if (!animGesture(rig, a.gesture, a.gestureT)) a.gesture = null;
     }
+    if (!a.gesture && !a.sitting) {
+      // holding a neighbour's hand, or holding a hand out waiting for someone to take it
+      if (a.handSides?.length) for (const side of a.handSides) animHoldHand(rig, side);
+      else if (a.wantsHands) animHoldHand(rig, 'R', 0.6);
+    }
     rig.update(dt, 14);
     rig.root.position.copy(a.pos);
     rig.root.rotation.y = a.heading;
   }
 
+  /**
+   * Visitors and holding hands: a visitor on the stage takes the hand of someone close by who holds
+   * a hand out (after a moment, like a real person would), and now and then holds out a hand to a
+   * neighbour on its own. It lets go again a while after nobody near wants to hold hands any more.
+   */
+  updateHandWish(a, dt, people) {
+    if (!onStage(a.pos) || a.sitting || a.state === 'sit') { a.wantsHands = false; a.handTimer = 0; return; }
+    let invited = false, neighbour = false;
+    for (const o of people) {
+      if (o === a) continue;
+      const d = Math.hypot(o.pos.x - a.pos.x, o.pos.z - a.pos.z);
+      if (d > 1.6) continue;
+      neighbour = true;
+      if (o.wantsHands) invited = true;
+    }
+    if (invited) {
+      a.handDelay = (a.handDelay ?? 0) + dt;
+      if (a.handDelay > 0.8) { a.wantsHands = true; a.handTimer = 4; }
+    } else a.handDelay = 0;
+    if (!a.wantsHands && neighbour && Math.random() < dt * 0.015) { a.wantsHands = true; a.handTimer = 10 + Math.random() * 6; }
+    if (a.wantsHands && !invited) {
+      a.handTimer = (a.handTimer ?? 0) - dt;
+      if (a.handTimer <= 0) a.wantsHands = false;
+    }
+  }
+
   update(dt, t, people) {
     if (this.puppet) { this.updatePuppets(dt, t); return; }
     for (const a of [...this.agents]) {
+      this.updateHandWish(a, dt, people);
       let moving = false;
       if (a.state === 'walk' && a.next) {
         const to = new THREE.Vector3().subVectors(a.next, a.pos).setY(0);
@@ -347,8 +408,10 @@ export class Crowd {
           if (others.length) {
             const o = others[Math.floor(Math.random() * others.length)];
             const side = Math.random() < 0.5 ? -1 : 1;
+            const l = toScreenLocal(o.pos);
             a.intent = 'approach';
-            this.setPath(a, new THREE.Vector3(o.pos.x, 0, o.pos.z + side * 0.9));
+            a.stageTries = 0;
+            this.setPath(a, onStagePoint(screenToWorld(l.x, l.z + side * 0.9))); // beside them, along the stage
           }
         }
         if (a.state === 'engage' && a.timer <= 0) {
@@ -361,18 +424,7 @@ export class Crowd {
         a.pos.addScaledVector(a.vel, dt);
         resolveCollisions(a.pos, 0.28, this.obstacles);
       }
-      // occasional remarks (speech bubbles), mostly while watching the screen or sitting
-      a.sayCd -= dt;
-      if (a.sayCd <= 0) {
-        a.sayCd = 12 + Math.random() * 22;
-        if (['engage', 'sit', 'idle'].includes(a.state) && Math.random() < 0.7) {
-          const pool = LINES[a.kind] ?? LINES.adult;
-          a.sayText = pool[Math.floor(Math.random() * pool.length)];
-          a.sayId = 1 + Math.floor(Math.random() * 1e9);
-          a.sayUntil = performance.now() + 4500;
-          this.onSay?.(a, a.sayText);
-        }
-      }
+      // (no remarks / speech bubbles from visitors – feedback v5)
 
       // heading
       const spd = a.vel.length();

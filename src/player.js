@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Rig, PLAYER_STYLE, animIdle, animWalk, animGesture, animSit, GESTURES } from './character.js';
+import { Rig, PLAYER_STYLE, animIdle, animWalk, animGesture, animSit, animHoldHand, GESTURES } from './character.js';
 import { resolveCollisions, headingToScreen } from './world.js';
 
 const GESTURE_KEYS = ['wave', 'cheer', 'clap', 'dance', 'jump', 'bow', 'airplane', 'smoke'];
@@ -38,6 +38,7 @@ export class Player {
     window.addEventListener('keydown', (e) => {
       if (isTyping(e)) return;
       this.keys.add(e.code);
+      if (!this.enabled) return; // e.g. in spectator mode
       if (e.code === 'Space') { this.play('jump'); e.preventDefault(); }
       const n = Number(e.key);
       if (n >= 1 && n <= GESTURE_KEYS.length) this.play(GESTURE_KEYS[n - 1]);
@@ -57,7 +58,8 @@ export class Player {
         down.moved += Math.abs(dx) + Math.abs(dy);
         if (down.moved > 4) {
           this.yaw -= dx * 0.005;
-          this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.004, -0.15, 1.35);
+          // spectators may look straight up and down; the third-person camera stays above the ground
+          this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.004, this.spectator ? -1.3 : -0.15, this.spectator ? 1.45 : 1.35);
         }
       } else this.onHover?.(e.clientX, e.clientY);
     });
@@ -66,6 +68,7 @@ export class Player {
       down = null;
     });
     dom.addEventListener('wheel', (e) => {
+      if (this.spectator) { this.onGlide?.(-e.deltaY * 0.01); e.preventDefault(); return; }
       this.dist = THREE.MathUtils.clamp(this.dist * (1 + e.deltaY * 0.001), 1.4, 22);
       e.preventDefault();
     }, { passive: false });
@@ -83,11 +86,17 @@ export class Player {
     this.yaw = this.heading + Math.PI;
   }
 
+  /** Hold out a hand (or take it back). Someone close by who does the same takes it. */
+  toggleHands(on = !this.wantsHands) {
+    this.wantsHands = on && !this.seat;
+  }
+
   sitAt(seat) {
     if (seat.occupant && seat.occupant !== this) return false;
     this.standUp();
     seat.occupant = this;
     this.seat = seat;
+    this.wantsHands = false;
     this.gesture = null;
     return true;
   }
@@ -154,6 +163,11 @@ export class Player {
     } else if (this.gesture) {
       this.gestureT += dt;
       if (!animGesture(rig, this.gesture, this.gestureT)) this.gesture = null;
+    }
+    if (!pose && !this.gesture && !this.seat) {
+      // holding a neighbour's hand (sides from the installation), or holding a hand out
+      if (this.handSides?.length) for (const side of this.handSides) animHoldHand(rig, side);
+      else if (this.wantsHands) animHoldHand(rig, 'R', 0.6);
     }
     rig.update(dt, pose ? 20 : 16);
     rig.root.position.copy(this.pos);
