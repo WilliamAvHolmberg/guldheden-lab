@@ -40,6 +40,25 @@ Källa: svaren på de 11 frågorna + "To fix"-listan. **🧪 = testa när det ä
 - **"Vem du blev"-skylten** på skärmen: större, nästan ogenomskinlig mörk skylt med guldram och guldtext – syns 8 s när man kliver upp
 - **Bänken lyser under sig** i din färg när du sätter dig (tonar in/ut)
 
+### 🧪 Att testa – runda 3
+- **Ingen färgring under figurerna på torget** längre (ringen under avataren på skärmen finns kvar)
+- **LED-lister på bänkarna**: längs sitsens framkant och ryggstödets överkant – släckta när bänken är tom, tänds i spelarens färg när man sätter sig (plus ett svagt sken under bänken)
+- **Bilarna på skärmen omgjorda**: riktiga 1940-talsformer (motorhuv, kupé med fönster och dörrstolpe, rundade stänkskärmar, fotsteg, grill, stötfångare, lyktor, vita däcksidor) · sedanen är gröngrå med krämfärgat tak, coupén blå · **ny tredje bil**: konditoriets skåpbil i PV445-stil med "Konditori" på sidan
+
+### 🧪 Att testa – runda 4
+- **Jubla** (`2`) → avataren jublar som på en konsert: hoppar i takt med knytnävarna i luften och headbangar, svajar med båda armarna över huvudet, avslutar med ett högt hopp med armarna i ett V
+- **Hålla hand** → en mycket större blomma som **dansar**: svajar och studsar i takt, blomkronan snurrar, gnistrar
+- **Två på samma bänk** → avatarerna cyklar **tandemcykel** (främre halvan i den förstas färg, bakre i den andras), trampar i takt
+- **Natten** dämpad: lägre exponering, svagare sken från skärmen, girlanger och strålkastare
+
+### 🧪 Att testa – runda 5
+- **Ljusslingorna** lyser bara när det är mörkt: släckta på dagen, svaga i skymningen, tända på natten
+- **Kontrollpanelen** är hopfälld från början (`H` eller klick på "Controls" öppnar den)
+- **NPC-buggarna** – gemensam orsak: datorn som styr besökarna ("värden") kunde vara en flik som låg i bakgrunden. Webbläsaren pausar sådana flikar, så besökare som lades till syntes inte, stod still, och dök sedan upp alla på en gång. Nu blir alltid en **synlig** flik värd, och värdskapet flyttas om fliken hamnar i bakgrunden
+- **+ Visitor / + Group**: besökarna kommer en i taget (1–2,5 s mellanrum, gruppmedlemmar lite tätare) i stället för alla samtidigt
+- **Hålla hand**: besökare som håller hand med varandra släpper efter ~10 s och går vidare (förut kunde de bjuda in varandra i all evighet) · ingen går runt med utsträckt arm efter att ha lämnat scenen · din hand släpper de inte
+- Multiplayer-testet: 14 kontroller (värdbyte när fliken göms)
+
 ### Beslut (inget att bygga)
 - Avataren: behåll speglingen + egna rörelser vid gester · Restaurangskylten: **Guldheden** · Bilen från 1956: behåll · "Mer lik verkligheten" gällde torget på skärmen · Låtarna: från en sajt med gratis ljud · Faktatexterna: godkända
 

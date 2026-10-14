@@ -11,7 +11,8 @@ The room protocol (all JSON, see `party/server.js`):
 | --- | --- | --- |
 | `hello` | client → server | `{ name, style }` registers the player; triggers host election |
 | `welcome` | server → client | `{ id, host, state: { theme, muted, time }, players[] }` |
-| `host` | server → all | id of the client that simulates NPCs (first in room; migrates on leave) |
+| `host` | server → all | id of the client that simulates NPCs (first visible client; migrates on leave and when the host's tab is hidden) |
+| `vis` | client → server | `{ v }`: this tab became visible / hidden (`hello` also carries `visible`) |
 | `join` / `leave` | server → others | player metadata |
 | `p` | client → others | player snapshot `{ x, z, h, y, q[68], g?, gt?, gs? }` (17 joint quaternions, `g`/`gt` = gesture playing and its time, `gs` = webcam guest), or just `{ hidden: 1 }` once a second while in spectator mode |
 | `npcs` | host → others | `[{ id, n, k, s(seed), x, z, h, g, gt }]` at 8 Hz; non-hosts render puppets |
@@ -26,7 +27,7 @@ npm run party &            # local: wrangler dev on :8787 (skip for prod)
 npm run smoke              # local
 npm run smoke:prod         # production workers.dev host
 ```
-Expect `All 12 checks passed`. Each run uses a fresh room `smoke-<timestamp>`, so it never disturbs real players.
+Expect `All 14 checks passed`. Each run uses a fresh room `smoke-<timestamp>`, so it never disturbs real players.
 
 ## 2. Browser + bot (end-to-end)
 

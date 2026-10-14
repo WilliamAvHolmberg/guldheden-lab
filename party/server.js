@@ -1,7 +1,7 @@
 // PartyServer (Cloudflare Durable Object) room for Guldhedstorget.
 // - relays player snapshots (position + joint rotations) between clients
 // - keeps the shared state (era on the screen, sound on/off, time of day for everyone)
-// - elects a "host" client that simulates the NPC visitors and broadcasts them
+// - elects a "host" client that simulates the NPC visitors and broadcasts them (a visible tab)
 
 import { Server, routePartykitRequest } from 'partyserver';
 
@@ -18,10 +18,19 @@ export class Guldheden extends Server {
     this.broadcast(JSON.stringify(msg), exclude);
   }
 
+  /**
+   * The host simulates the visitors for everyone, so it should be a tab that is actually running:
+   * browsers pause tabs in the background. Keep the current host while it is visible (or nobody
+   * is); otherwise hand over to the first visible client.
+   */
   electHost() {
     const ids = [...this.getConnections()].map((c) => c.id).filter((id) => this.meta.has(id));
-    if (this.hostId && ids.includes(this.hostId)) return;
-    this.hostId = ids[0] ?? null;
+    const visible = ids.filter((id) => this.meta.get(id).visible !== false);
+    const current = this.hostId && ids.includes(this.hostId);
+    if (current && (this.meta.get(this.hostId).visible !== false || !visible.length)) return;
+    const next = visible[0] ?? ids[0] ?? null;
+    if (next === this.hostId) return;
+    this.hostId = next;
     this.broadcastJSON({ t: 'host', id: this.hostId });
   }
 
@@ -41,10 +50,15 @@ export class Guldheden extends Server {
     switch (msg.t) {
       case 'hello': {
         const name = String(msg.name ?? 'Neighbour').slice(0, 24);
-        this.meta.set(sender.id, { name, style: msg.style });
+        this.meta.set(sender.id, { name, style: msg.style, visible: msg.visible !== false });
         this.broadcastJSON({ t: 'join', id: sender.id, name, style: msg.style }, [sender.id]);
         this.electHost();
         sender.send(JSON.stringify({ t: 'host', id: this.hostId }));
+        break;
+      }
+      case 'vis': { // a tab was hidden or shown again
+        const m = this.meta.get(sender.id);
+        if (m) { m.visible = !!msg.v; this.electHost(); }
         break;
       }
       case 'p': // player snapshot

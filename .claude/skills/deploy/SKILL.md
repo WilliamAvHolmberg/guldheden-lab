@@ -30,7 +30,7 @@ The site reads the room server host from `VITE_PARTY_HOST` **at build time**.
    npm run deploy:party
    ```
 
-4. **Verify the server**: `npm run smoke:prod` must print `All 12 checks passed`. If it fails, do not deploy the site; fix the server first.
+4. **Verify the server**: `npm run smoke:prod` must print `All 14 checks passed`. If it fails, do not deploy the site; fix the server first.
 
 5. **Deploy the site**:
    ```sh

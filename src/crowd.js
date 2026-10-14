@@ -82,6 +82,7 @@ export class Crowd {
     this.agents = [];
     this.rand = rng(77);
     this.nameIdx = 1;
+    this.queue = []; // visitors waiting to arrive (see queueVisitor)
   }
 
   randomPoint(area = SQUARE) {
@@ -130,6 +131,32 @@ export class Crowd {
   spawnFast() {
     const at = ENTRANCES[Math.floor(Math.random() * ENTRANCES.length)]();
     return this.spawn({ at, goScreen: true, hurry: true });
+  }
+
+  /**
+   * "+ Visitor" / "+ Group" queue: visitors arrive one after another (1–2.5 s apart; members of a
+   * group a little closer together) instead of all at the same moment.
+   */
+  queueVisitor() { this.queue.push({ kind: 'one', gap: 1 + Math.random() * 1.5 }); }
+
+  queueGroup(n = 4) {
+    const center = this.randomPoint(ENGAGE);
+    const entrance = Math.floor(Math.random() * ENTRANCES.length);
+    const kinds = ['elderly', 'adult', 'child', 'elderly', 'adult', 'adult'];
+    for (let i = 0; i < n; i++) {
+      // in a line along the stage (screen-local z), so they end up side by side
+      const l = toScreenLocal(center);
+      this.queue.push({ kind: 'member', gap: 0.6 + Math.random() * 0.5, entrance, who: kinds[i % kinds.length], near: screenToWorld(l.x, l.z + (i - (n - 1) / 2) * 1.0) });
+    }
+  }
+
+  updateQueue(dt) {
+    this.queueCd = Math.max(0, (this.queueCd ?? 0) - dt);
+    if (!this.queue.length || this.queueCd > 0) return;
+    const q = this.queue.shift();
+    if (q.kind === 'one') this.spawnFast();
+    else this.spawn({ kind: q.who, at: ENTRANCES[q.entrance](), goScreen: true, hurry: true, near: q.near });
+    this.queueCd = this.queue[0]?.gap ?? 0;
   }
 
   spawnGroup(n = 4) {
@@ -187,6 +214,7 @@ export class Crowd {
   }
 
   clear() {
+    this.queue.length = 0;
     for (const a of [...this.agents]) this.removeAgent(a);
   }
 
@@ -309,7 +337,7 @@ export class Crowd {
     }
     if (!a.gesture && !a.sitting) {
       // holding a neighbour's hand, or holding a hand out waiting for someone to take it
-      if (a.handSides?.length) for (const side of a.handSides) animHoldHand(rig, side);
+      if (a.wantsHands && a.handSides?.length) for (const side of a.handSides) animHoldHand(rig, side);
       else if (a.wantsHands) animHoldHand(rig, 'R', 0.6);
     }
     rig.update(dt, 14);
@@ -324,27 +352,33 @@ export class Crowd {
    */
   updateHandWish(a, dt, people) {
     if (!onStage(a.pos) || a.sitting || a.state === 'sit') { a.wantsHands = false; a.handTimer = 0; return; }
-    let invited = false, neighbour = false;
+    // a player's offered hand is always taken (and kept); two visitors holding hands let go after
+    // a while and then don't start again for some seconds – otherwise they kept inviting each
+    // other forever and never moved on
+    a.handCool = Math.max(0, (a.handCool ?? 0) - dt);
+    let byPlayer = false, byVisitor = false, neighbour = false;
     for (const o of people) {
       if (o === a) continue;
       const d = Math.hypot(o.pos.x - a.pos.x, o.pos.z - a.pos.z);
       if (d > 1.6) continue;
       neighbour = true;
-      if (o.wantsHands) invited = true;
+      if (o.wantsHands) { if (this.agents.includes(o)) byVisitor = true; else byPlayer = true; }
     }
+    const invited = byPlayer || (byVisitor && a.handCool <= 0);
     if (invited) {
       a.handDelay = (a.handDelay ?? 0) + dt;
-      if (a.handDelay > 0.8) { a.wantsHands = true; a.handTimer = 4; }
+      if (a.handDelay > 0.8 && !a.wantsHands) { a.wantsHands = true; a.handTimer = 8 + Math.random() * 6; }
     } else a.handDelay = 0;
-    if (!a.wantsHands && neighbour && Math.random() < dt * 0.015) { a.wantsHands = true; a.handTimer = 10 + Math.random() * 6; }
-    if (a.wantsHands && !invited) {
+    if (!a.wantsHands && neighbour && a.handCool <= 0 && Math.random() < dt * 0.015) { a.wantsHands = true; a.handTimer = 8 + Math.random() * 6; }
+    if (a.wantsHands && !byPlayer) {
       a.handTimer = (a.handTimer ?? 0) - dt;
-      if (a.handTimer <= 0) a.wantsHands = false;
+      if (a.handTimer <= 0) { a.wantsHands = false; a.handCool = 10 + Math.random() * 8; }
     }
   }
 
   update(dt, t, people) {
     if (this.puppet) { this.updatePuppets(dt, t); return; }
+    this.updateQueue(dt);
     for (const a of [...this.agents]) {
       this.updateHandWish(a, dt, people);
       let moving = false;

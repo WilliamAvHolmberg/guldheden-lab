@@ -235,7 +235,10 @@ function toggleKeys(force) {
   $('keys').querySelector('em').textContent = min ? 'show' : 'hide';
   try { localStorage.setItem('gh-keys-min', min ? '1' : ''); } catch {}
 }
-try { if (localStorage.getItem('gh-keys-min')) toggleKeys(true); } catch {}
+// folded away by default (H or a click on the header opens it); a viewer who opened it keeps it open
+let keysOpen = false;
+try { keysOpen = localStorage.getItem('gh-keys-min') === ''; } catch {}
+toggleKeys(!keysOpen);
 $('keys').querySelector('.kh').onclick = () => toggleKeys();
 
 // ---------------------------------------------------------------- spectator mode

@@ -188,8 +188,8 @@ export class Multiplayer {
   }
 
   runCmd(cmd) {
-    if (cmd === 'add') this.crowd.spawnFast();
-    else if (cmd === 'group') this.crowd.spawnGroup(4);
+    if (cmd === 'add') this.crowd.queueVisitor();
+    else if (cmd === 'group') this.crowd.queueGroup(4);
     else if (cmd === 'clear') this.crowd.clear();
     else if (cmd === 'remove') this.crowd.removeOne();
   }

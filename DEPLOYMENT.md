@@ -66,7 +66,7 @@ Verifiera:
 npm run smoke:prod
 ```
 
-Förväntat: `All 12 checks passed`. Kontrollerna är welcome, värdval, join, spelardata, besökarsnapshot, epokbyte, tid på dygnet (även för den som ansluter sent), kommando vidare till värden, chatt, leave och värdbyte.
+Förväntat: `All 14 checks passed`. Kontrollerna är welcome, värdval, join, spelardata, besökarsnapshot, epokbyte, tid på dygnet (även för den som ansluter sent), värdbyte när värdens flik hamnar i bakgrunden, kommando vidare till värden, chatt, leave och värdbyte.
 
 **Byter du protokollet** (`party/server.js` eller `src/net.js`): deploya servern **före** sajten. Annars pratar en ny klient med en gammal server.
 

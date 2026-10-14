@@ -769,7 +769,7 @@ export function buildWorld(scene, renderer) {
     },
     night: {
       sun: new THREE.Vector3(-0.8, -0.2, 0.4), moon: new THREE.Vector3(0.3, 0.8, 0.35), sunColor: '#9fb4ff', sunI: 0.28, hemiSky: '#34466e', hemiGround: '#1a1a22', hemiI: 0.22,
-      turbidity: 2, rayleigh: 0.3, mie: 0.003, exposure: 1.15, fog: '#0f1522', cloudTint: '#39445a', cloudShade: '#141a26', cover: 0.5,
+      turbidity: 2, rayleigh: 0.3, mie: 0.003, exposure: 0.95, fog: '#0f1522', cloudTint: '#39445a', cloudShade: '#141a26', cover: 0.5,
       lamps: 1, windows: 1, night: 1,
     },
   };

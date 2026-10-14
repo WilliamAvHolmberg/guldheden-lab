@@ -107,10 +107,11 @@ Cloudflare account. (PartyKit's shared `partykit.dev` platform currently refuses
   There are deliberately no captions: visitors discover what standing together does. Only people
   standing on the stage, or sitting on one of the four benches along its edges, appear on the screen.
 - **Avatars**: everyone on the stage gets a historical figure (`HISTORICAL` in `src/character.js`) that
-  follows their pose, and a colour of their own (a ring under the avatar and at their feet; the
-  footprints and benches they use light up in it). Gestures make the avatar do bigger moves of its own:
+  follows their pose, and a colour of their own (a ring under the avatar on the screen; the
+  footprints and the LED strips on the benches they use light up in it). Gestures make the avatar do bigger moves of its own:
   clap → heel click, jump → high jump, wave → big wave, bow → somersault, airplane → flies a loop,
-  dance → Lindy Hop. Sitting on a bench → the avatar rides a bicycle round. Standing still for a while →
+  dance → Lindy Hop, cheer → cheers like at a concert. Sitting on a bench → the avatar rides a bicycle round
+  (two on the same bench share a tandem). Standing still for a while →
   a thought bubble suggests something to try.
 - **Empty stage**: the wall shows black-and-white, scratched old film of Guldhedstorget in the 1940s, with
   silent. The only people on the screen are the avatars of the people on the stage – no extra
@@ -122,8 +123,8 @@ Cloudflare account. (PartyKit's shared `partykit.dev` platform currently refuses
 - **Three or more close together**, or all three footprints of the dance spot taken: the avatars dance in
   a ring inside a circle of their colours, with sparkles and confetti and a high-tempo song.
   Three or more anywhere on the stage turn on slowly sweeping spotlights.
-- **Holding hands** (`X`, both people): a pair's avatars hold hands and a flower grows from their joined
-  hands; three or more in a chain dance a synced set dance in a line.
+- **Holding hands** (`X`, both people): a pair's avatars hold hands and a big dancing flower grows from their
+  joined hands; three or more in a chain dance a synced set dance in a line.
 - **Social meter** ("TOGETHER", a column on the right of the screen in the wall's archive style, yellow)
   shows how social the stage is right now: just being there counts a little (at most 25 %), doing things
   with others much more – chatting, dancing, holding hands, the same gesture at the same time – and

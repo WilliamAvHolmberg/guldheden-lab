@@ -41,6 +41,15 @@ async function protocol() {
   await sleep(600);
   const c = await client(room, 'c3', 'Cia'); // joins late: must get the current time of day in the welcome
   await sleep(400);
+  // the host's tab goes to the background → a visible client takes over the visitors; back again → no change
+  const hostBefore = b.got.filter((m) => m.t === 'host').length;
+  a.ws.send(JSON.stringify({ t: 'vis', v: false }));
+  await sleep(400);
+  const handedOver = b.got.slice().reverse().find((m) => m.t === 'host')?.id;
+  const hostMsgs = b.got.filter((m) => m.t === 'host').length;
+  a.ws.send(JSON.stringify({ t: 'vis', v: true }));
+  await sleep(300);
+  const stayed = b.got.filter((m) => m.t === 'host').length === hostMsgs;
   c.ws.close();
   a.ws.close();
   await sleep(600);
@@ -58,8 +67,10 @@ async function protocol() {
     ['A late joiner gets the shared time of day', has(c, (m) => m.t === 'welcome' && m.state.time === 'night')],
     ['B\'s command is forwarded to host A', has(a, (m) => m.t === 'cmd' && m.cmd === 'group')],
     ['A receives B\'s chat message with name', has(a, (m) => m.t === 'chat' && m.id === 'b2' && m.name === 'Bo' && m.text === 'Hej från Bo!')],
+    ['Hidden host hands over to a visible client', hostMsgs > hostBefore && handedOver !== 'a1'],
+    ['The new host stays when the old one is visible again', stayed],
     ['B sees A leave', has(b, (m) => m.t === 'leave' && m.id === 'a1')],
-    ['Host migrates to B', has(b, (m) => m.t === 'host' && m.id === 'b2')],
+    ['Host is B once A has left', b.got.slice().reverse().find((m) => m.t === 'host')?.id === 'b2'],
   ];
   for (const [label, ok] of checks) console.log(`${ok ? '✓' : '✗'} ${label}`);
   const failed = checks.filter(([, ok]) => !ok).length;

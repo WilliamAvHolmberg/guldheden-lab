@@ -715,7 +715,7 @@ export function animTalk(rig, t, speaking, seed = 0) {
 // ---------------------------------------------------------------------------
 
 /** Person's gesture → the avatar's own move. Gestures not listed are shown as they are. */
-export const AVATAR_FOR = { clap: 'heelclick', jump: 'highjump', wave: 'bigwave', bow: 'somersault', airplane: 'fly', dance: 'lindy' };
+export const AVATAR_FOR = { clap: 'heelclick', jump: 'highjump', wave: 'bigwave', bow: 'somersault', airplane: 'fly', dance: 'lindy', cheer: 'concert' };
 export const AVATAR_ACTIONS = {
   heelclick: { dur: 2.8 },
   highjump: { dur: 2.0 },
@@ -723,6 +723,7 @@ export const AVATAR_ACTIONS = {
   somersault: { dur: 2.0 },
   fly: { dur: 6.0 },
   lindy: { dur: 6.0 },
+  concert: { dur: 4.4 },
 };
 
 const arc = (u, h) => 4 * u * (1 - u) * h; // jump height at 0..1 of the flight
@@ -853,6 +854,52 @@ export function animAvatar(rig, name, t) {
       rig.set('head', -0.9 * air, 0, 0);
       break;
     }
+    case 'concert': {
+      // cheering like at a concert: jumping on the beat, fists pumping overhead, head banging,
+      // a wide sway with both arms waving, and a big jump with arms in a V to finish
+      const e = Math.min(t / 0.3, 1);
+      const beat = t / 0.42;
+      const hop = Math.abs(Math.sin(Math.PI * beat));
+      if (t < 1.7) {
+        // jump on every beat, alternating fist pumps
+        out.lift = 0.22 * hop * e;
+        const pump = Math.sin(Math.PI * beat);
+        rig.set('uArmL', -0.2, 0, (2.6 + 0.35 * Math.max(0, pump)) * e);
+        rig.set('uArmR', -0.2, 0, -(2.6 + 0.35 * Math.max(0, -pump)) * e);
+        rig.set('fArmL', 0, 0, 0.5 * Math.max(0, -pump) * e);
+        rig.set('fArmR', 0, 0, -0.5 * Math.max(0, pump) * e);
+        rig.set('thighL', -0.5 * (1 - hop) * e, 0, 0.08);
+        rig.set('thighR', -0.5 * (1 - hop) * e, 0, -0.08);
+        rig.set('shinL', 0.9 * (1 - hop) * e, 0, 0);
+        rig.set('shinR', 0.9 * (1 - hop) * e, 0, 0);
+        rig.set('head', 0.35 * Math.sin(Math.PI * beat * 2) * e, 0, 0); // head banging
+        rig.set('spine', 0.1 * Math.sin(Math.PI * beat * 2) * e, 0, 0);
+      } else if (t < 3.3) {
+        // big sway, both arms waving overhead side to side
+        const sw = Math.sin((t - 1.7) * 4.2);
+        rig.set('uArmL', 0, 0, 2.8 + 0.3 * sw);
+        rig.set('uArmR', 0, 0, -2.8 + 0.3 * sw);
+        rig.set('fArmL', 0, 0, 0.2 * sw);
+        rig.set('fArmR', 0, 0, 0.2 * sw);
+        rig.set('hips', 0, 0, -0.12 * sw);
+        rig.set('spine', 0, 0, 0.22 * sw);
+        rig.set('chest', 0, 0, 0.12 * sw);
+        rig.set('head', -0.25, 0, 0.15 * sw);
+        out.yaw = 0.15 * sw;
+        out.lift = 0.05 * Math.abs(sw);
+      } else if (t < 3.55) crouch(rig, phase(t, 3.3, 3.55));
+      else if (t < 4.2) {
+        // the big finish: a high jump with arms flung up in a V and legs kicked apart
+        const u = phase(t, 3.55, 4.2), k = Math.sin(Math.PI * u);
+        out.lift = arc(u, 0.9);
+        rig.set('uArmL', -0.3, 0, 2.5 * k + 0.2);
+        rig.set('uArmR', -0.3, 0, -2.5 * k - 0.2);
+        rig.set('thighL', -0.25 * k, 0, 0.55 * k);
+        rig.set('thighR', -0.25 * k, 0, -0.55 * k);
+        rig.set('head', -0.35 * k, 0, 0);
+      } else crouch(rig, 1 - phase(t, 4.2, 4.4));
+      break;
+    }
     case 'lindy': {
       // Lindy Hop: bouncy triple steps, Charleston kicks, swinging arms, then "jazz hands"
       const e = Math.min(t / 0.4, (def.dur - t) / 0.4, 1);
@@ -913,7 +960,8 @@ export function animBike(rig, ph) {
 }
 
 /** A 1940s bicycle (black frame, big wheels, a basket) along +Z, wheels on the ground. */
-export function makeBicycle(color = '#1c2a24') {
+export function makeBicycle(color = '#1c2a24', tandemColor = null) {
+  if (tandemColor) return makeTandem(color, tandemColor);
   const g = new THREE.Group();
   const frame = M(color, 0.4, 0.4), chrome = M('#cfcfcf', 0.25, 0.9), tyre = M('#151515', 0.8), leather = M('#4a2d1a', 0.6);
   const wheelGeo = G('bikeWheel', () => new THREE.TorusGeometry(0.33, 0.022, 8, 28));
@@ -947,6 +995,62 @@ export function makeBicycle(color = '#1c2a24') {
   const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.05, 0.24), leather);
   saddle.position.set(0, 0.86, -0.24);
   g.add(saddle);
+  const basket = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.22), M('#a0784a', 0.9));
+  basket.position.set(0, 0.92, 0.55);
+  g.add(basket);
+  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+/**
+ * A tandem for two riders on the same bench: the front rider sits where a normal bicycle's rider
+ * sits (saddle at z −0.24), the second rider 0.62 m behind. Front half in the first rider's
+ * colour, back half in the second's.
+ */
+function makeTandem(colorA, colorB) {
+  const g = new THREE.Group();
+  const fa = M(colorA, 0.4, 0.4), fb = M(colorB, 0.4, 0.4), chrome = M('#cfcfcf', 0.25, 0.9), tyre = M('#151515', 0.8), leather = M('#4a2d1a', 0.6);
+  const wheelGeo = G('bikeWheel', () => new THREE.TorusGeometry(0.33, 0.022, 8, 28));
+  const spokeGeo = G('bikeSpokes', () => new THREE.CylinderGeometry(0.006, 0.006, 0.64, 4));
+  g.userData.wheels = [];
+  g.userData.tandem = true;
+  for (const z of [-1.14, 0.52]) {
+    const w = new THREE.Group();
+    w.position.set(0, 0.35, z);
+    const tire = new THREE.Mesh(wheelGeo, tyre);
+    tire.rotation.y = Math.PI / 2;
+    w.add(tire);
+    for (let k = 0; k < 4; k++) { const sp = new THREE.Mesh(spokeGeo, chrome); sp.rotation.x = (k / 4) * Math.PI; w.add(sp); }
+    g.add(w);
+    g.userData.wheels.push(w);
+  }
+  const bar = (a, b, mat, r = 0.022) => {
+    const v = new THREE.Vector3().subVectors(b, a);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, v.length(), 8), mat);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), v.normalize());
+    g.add(m);
+  };
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  // front half (front rider)
+  bar(V(0, 0.42, 0.02), V(0, 0.8, -0.22), fa); // seat tube
+  bar(V(0, 0.42, 0.02), V(0, 0.78, 0.38), fa); // down tube
+  bar(V(0, 0.8, -0.22), V(0, 0.82, 0.36), fa); // top tube
+  bar(V(0, 0.35, 0.52), V(0, 0.95, 0.4), fa); // fork + head tube
+  bar(V(-0.24, 0.98, 0.36), V(0.24, 0.98, 0.36), chrome, 0.014); // handlebar
+  // back half (second rider)
+  bar(V(0, 0.42, 0.02), V(0, 0.42, -0.6), fb); // bottom tube between the two crank sets
+  bar(V(0, 0.8, -0.22), V(0, 0.8, -0.84), fb); // top tube to the rear seat
+  bar(V(0, 0.42, -0.6), V(0, 0.8, -0.84), fb); // rear seat tube
+  bar(V(0, 0.42, -0.6), V(0, 0.35, -1.14), fb); // chain stay
+  bar(V(0, 0.8, -0.84), V(0, 0.35, -1.14), fb); // seat stay
+  bar(V(0, 0.8, -0.3), V(0, 0.92, -0.3), chrome, 0.014); // stoker's handlebar post
+  bar(V(-0.2, 0.92, -0.32), V(0.2, 0.92, -0.32), chrome, 0.014); // stoker's handlebar
+  for (const z of [-0.24, -0.86]) {
+    const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.05, 0.24), leather);
+    saddle.position.set(0, 0.86, z);
+    g.add(saddle);
+  }
   const basket = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.22), M('#a0784a', 0.9));
   basket.position.set(0, 0.92, 0.55);
   g.add(basket);
@@ -1023,16 +1127,16 @@ export function makeFlower(petal = '#e9677a') {
   }
   const head = new THREE.Group();
   head.position.y = 0.36;
-  for (let k = 0; k < 6; k++) {
+  for (let k = 0; k < 8; k++) {
     const p = new THREE.Mesh(G('flPetal', () => new THREE.SphereGeometry(1, 8, 6)), M(petal, 0.6));
-    const a = (k / 6) * Math.PI * 2;
-    p.scale.set(0.045, 0.018, 0.028);
-    p.position.set(Math.cos(a) * 0.045, 0, Math.sin(a) * 0.045);
+    const a = (k / 8) * Math.PI * 2;
+    p.scale.set(0.075, 0.02, 0.04); // a big, open bloom
+    p.position.set(Math.cos(a) * 0.075, 0, Math.sin(a) * 0.075);
     p.rotation.y = -a;
     head.add(p);
   }
-  head.add(new THREE.Mesh(G('flCentre', () => new THREE.SphereGeometry(0.022, 8, 6)), M('#f1c453', 0.5)));
-  head.rotation.x = 0.5; // the bloom faces the audience
+  head.add(new THREE.Mesh(G('flCentre', () => new THREE.SphereGeometry(0.035, 10, 8)), M('#f1c453', 0.5)));
+  head.rotation.x = 1.0; // the bloom faces the audience
   g.add(head);
   g.userData.head = head;
   return g;

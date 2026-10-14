@@ -204,14 +204,17 @@ export class Installation {
     add(new THREE.BoxGeometry(80, 0.02, 3.8), M('#a39d90', 0.95), 0, 0.012, -12.25, false); // pale, dusty 1940s asphalt
     add(new THREE.BoxGeometry(80, 0.1, 0.25), M('#d8d2c4', 0.9), 0, 0.05, -10.25, false); // light granite kerbs
     add(new THREE.BoxGeometry(80, 0.1, 0.25), M('#d8d2c4', 0.9), 0, 0.05, -14.25, false);
-    // two cars parked along the far kerb (after the group's reference photos)
-    const parked1 = vintageCar('#3a3d42', { roof: '#e9e5da' }); // two-tone saloon
+    // three cars parked along the far kerb (after the group's reference photos)
+    const parked1 = vintageCar('#4c5d55', { roof: '#e9e3d2' }); // two-tone saloon, grey-green with a cream roof
     parked1.position.set(-7.5, 0, -13.35);
     g.add(parked1);
-    const parked2 = vintageCar('#1d2a44', { coupe: true }); // dark-blue coupé
+    const parked2 = vintageCar('#2f4570', { coupe: true }); // blue coupé (light enough that its windows read)
     parked2.position.set(10.5, 0, -13.35);
     parked2.rotation.y = Math.PI;
     g.add(parked2);
+    const parked3 = vintageCar('#3f6b5a', { van: true, sign: 'Konditori' }); // the café's delivery van (PV445-style)
+    parked3.position.set(3.2, 0, -13.35);
+    g.add(parked3);
 
     // lawn with green slatted benches and white flower boxes (front left in the photo)
     const benchGreen = M('#2d5a39', 0.7), white = M('#f3efe4', 0.8);
@@ -761,11 +764,15 @@ export class Installation {
         const front = new THREE.Object3D();
         front.position.set(sx, 0, 0.85);
         g.add(front);
-        // a light strip under the front of the seat: lit in the colour of whoever sits there
-        const glow = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.025, 0.03), new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }));
-        glow.position.set(sx, 0.415, 0.12);
-        glow.visible = false;
-        glow.userData.dynamic = true;
+        // LED strips along the front edge of the seat and the top of the backrest: dark when the seat
+        // is free, lit in the colour of whoever sits there
+        const ledMat = new THREE.MeshBasicMaterial({ color: LED_OFF, toneMapped: false });
+        const ledFront = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.026, 0.026), ledMat);
+        ledFront.position.set(sx, 0.45, 0.178);
+        const ledBack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.026, 0.026), ledMat);
+        ledBack.position.set(sx, 0.795, -0.29);
+        ledBack.rotation.x = -0.2;
+        ledFront.userData.dynamic = ledBack.userData.dynamic = true;
         // …and a pool of the same colour on the ground under the seat: the bench lights up from below
         const pool = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.3), new THREE.MeshBasicMaterial({
           map: this.glowTex ??= glowTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
@@ -774,8 +781,8 @@ export class Installation {
         pool.position.set(sx, 0.03, -0.05);
         pool.visible = false;
         pool.userData.dynamic = true;
-        g.add(glow, pool);
-        this.seatAnchors.push({ seat, front, group: g, bench: benchIndex, glow, pool });
+        g.add(ledFront, ledBack, pool);
+        this.seatAnchors.push({ seat, front, group: g, bench: benchIndex, led: ledMat, pool });
         const lp = new THREE.Vector3(sx, 0, -0.05).applyAxisAngle(new THREE.Vector3(0, 1, 0), g.rotation.y).add(g.position);
         this.addObstacle(obstacles, { t: 'circle', x: lp.x, z: lp.z, r: 0.42 });
       }
@@ -795,7 +802,7 @@ export class Installation {
       const pos = a.seat.getWorldPosition(new THREE.Vector3());
       const front = a.front.getWorldPosition(v).clone();
       const heading = Math.atan2(front.x - pos.x, front.z - pos.z);
-      return { pos, front, heading, occupant: null, bench: a.bench, glow: a.glow, pool: a.pool };
+      return { pos, front, heading, occupant: null, bench: a.bench, led: a.led, pool: a.pool };
     });
   }
 
@@ -1103,8 +1110,8 @@ export class Installation {
         tr.tag.removeFromParent();
         tr.filterIcon.removeFromParent();
         if (tr.nudge) { tr.nudge.material.map.dispose(); tr.nudge.removeFromParent(); }
-        for (const r of [tr.ring, tr.floorRing]) { r.geometry.dispose(); r.material.dispose(); r.removeFromParent(); }
-        if (tr.handFlower) { tr.handFlower.removeFromParent(); tr.handFlower = null; }
+        tr.ring.geometry.dispose(); tr.ring.material.dispose(); tr.ring.removeFromParent();
+        tr.person.handSides = []; // left the stage: let go of any hands
         tr.bike?.removeFromParent();
         this.tracked.delete(id);
       }
@@ -1209,13 +1216,10 @@ export class Installation {
     const ring = glowRing(1.45, this.glowRingTex, color, false); // glowing, under the avatar on the screen
     ring.position.copy(stage).setY(0.03);
     this.archive.add(ring);
-    const floorRing = glowRing(1.25, this.glowRingTex, color); // and at the person's feet on the square
-    floorRing.position.copy(p.pos).setY(0.035);
-    this.scene.add(floorRing);
     return {
       id: p.id, person: p, style, rig, born: this.time, lastSeen: this.time, leaving: false,
       stage, yaw: 0, tag, filterIcon, filterT: 0, filtered: false, filterLogged: false, group: null, seat: null,
-      color, ring, floorRing, mode: 'mirror', modeT: this.time,
+      color, ring, mode: 'mirror', modeT: this.time,
     };
   }
 
@@ -1416,11 +1420,10 @@ export class Installation {
       // fade in when someone sits down, out when they get up
       seat.lit = (seat.lit ?? 0) + ((tr ? 1 : 0) - (seat.lit ?? 0)) * (1 - Math.exp(-dt * 5));
       if (tr) seat.litColor = tr.color;
-      seat.glow.visible = seat.pool.visible = seat.lit > 0.01;
-      if (seat.litColor) {
-        seat.glow.material.color.set(seat.litColor).multiplyScalar(seat.lit);
-        seat.pool.material.color.set(seat.litColor).multiplyScalar(1.7 * seat.lit);
-      }
+      seat.pool.visible = seat.lit > 0.01;
+      // the LED strips fade from dark to the sitter's colour (bright enough to bloom a little)
+      seat.led.color.set(LED_OFF).lerp(_c.set(seat.litColor ?? LED_OFF).multiplyScalar(1.6), seat.lit);
+      if (seat.litColor) seat.pool.material.color.set(seat.litColor).multiplyScalar(0.7 * seat.lit); // and a soft glow underneath
     }
     // flowers grow out of every pair of joined hands
     for (const g of this.groups.values()) {
@@ -1438,10 +1441,18 @@ export class Installation {
           g.flowers.set(key, f);
         }
         const sc = ((a.rig.style.scale ?? 1) + (b.rig.style.scale ?? 1)) / 2;
-        f.position.set((a.stage.x + b.stage.x) / 2, 0.86 * sc, (a.stage.z + b.stage.z) / 2 + 0.12);
-        const grow = smooth(0.4, 2.4, t - f.userData.t0);
-        f.scale.setScalar(Math.max(0.001, grow * 1.6));
-        f.rotation.z = Math.sin(t * 1.7 + i) * 0.12;
+        // a big flower that dances: it sways and bounces on the beat, and its bloom spins
+        const beat = (t - f.userData.t0) * 2.2;
+        const bounce = Math.abs(Math.sin(Math.PI * beat));
+        f.position.set((a.stage.x + b.stage.x) / 2, 0.8 * sc + 0.06 * bounce, (a.stage.z + b.stage.z) / 2 + 0.3);
+        const grow = smooth(0.3, 2.0, t - f.userData.t0);
+        f.scale.set(1, 1 - 0.1 * bounce, 1).multiplyScalar(Math.max(0.001, grow * 3.4 * (1 + 0.06 * bounce)));
+        f.rotation.z = Math.sin(t * 2.6 + i) * 0.3;
+        f.rotation.x = Math.sin(t * 1.9 + i) * 0.12;
+        f.userData.head.rotation.y += dt * 2.2;
+        if (grow > 0.9 && Math.floor(beat) !== Math.floor(beat - dt * 2.2)) {
+          this.emit('sparkle', f.position.clone().add(_v.set(0, 1.22 * grow, 0)), 3, 0.6, 0.8); // at the bloom
+        }
       }
     }
 
@@ -1613,14 +1624,19 @@ export class Installation {
     if (tr.seat) { tr.action = null; tr.nextAction = null; }
 
     // --- sitting on a bench: the avatar rides a bicycle round and round until you stand up ---
-    if (tr.seat) {
+    // two on the same bench share a tandem: the first (by id, same on every client) steers in front
+    const mate = tr.seat ? [...this.tracked.values()].find((o) => o !== tr && !o.leaving && o.seat && o.seat.bench === tr.seat.bench) : null;
+    const tandemBack = !!mate && mate.id < tr.id;
+    if (tr.seat && !tandemBack) {
+      const tandem = !!mate;
+      if (tr.bike && !!tr.bike.userData.tandem !== tandem) { tr.bike.removeFromParent(); tr.bike = null; }
       if (!tr.bike) {
-        tr.bike = makeBicycle(tr.color); // in the rider's colour
+        tr.bike = makeBicycle(tr.color, tandem ? mate.color : null); // in the riders' colours
         rig.root.add(tr.bike);
-        tr.bikeHome = target.clone();
-        tr.bikeA = 0;
-        tr.pedal = 0;
       }
+      tr.bikeHome ??= target.clone();
+      tr.bikeA ??= 0;
+      tr.pedal ??= 0;
       tr.bikeA += dt * 0.55;
       tr.pedal += dt * 6;
       const R = 1.5, Rz = 0.55;
@@ -1631,23 +1647,28 @@ export class Installation {
       tr.bike.removeFromParent();
       tr.bike = null;
     }
+    if (tandemBack) {
+      // the second rider sits on the tandem's back saddle, 0.62 m behind the front rider, pedalling in step
+      target = mate.stage.clone().addScaledVector(_v.set(Math.sin(mate.yaw), 0, Math.cos(mate.yaw)), -0.62);
+      yawTarget = mate.yaw;
+      tr.pedal = mate.pedal ?? 0;
+    }
+    if (!tr.seat) { tr.bikeHome = null; tr.bikeA = null; tr.pedal = null; }
 
     // a change of mode (mirroring → chat → dance → own move …) blends in over about a second instead of snapping
     const mode = tr.seat ? 'bike' : tr.action ? 'action' : g ? g.type : 'mirror';
     if (mode !== tr.mode) { tr.mode = mode; tr.modeT = t; }
     const blendIn = smooth(0, 1.2, t - tr.modeT);
-    tr.stage.lerp(target, 1 - Math.exp(-dt * (2 + 4 * blendIn)));
+    tr.stage.lerp(target, 1 - Math.exp(-dt * (tandemBack ? 14 : 2 + 4 * blendIn))); // the back rider sticks to the tandem
     rig.root.position.copy(tr.stage);
     tr.ring.position.set(tr.stage.x, 0.03, tr.stage.z);
-    tr.floorRing.position.set(p.pos.x, 0.035, p.pos.z);
     // in a chat, dance or hand-holding the shared ring takes over on the screen; each own ring fades out
     const pulse = 0.85 + 0.15 * Math.sin(t * 2.4 + hashStr(tr.id));
     tr.ringLevel = (tr.ringLevel ?? 1) + ((g ? 0 : 1) - (tr.ringLevel ?? 1)) * (1 - Math.exp(-dt * 4));
     tr.ring.material.opacity = s * pulse * tr.ringLevel;
-    tr.floorRing.material.opacity = s * pulse;
     let dy = yawTarget - tr.yaw;
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-    tr.yaw += dy * (1 - Math.exp(-dt * (3 + 5 * blendIn)));
+    tr.yaw += dy * (1 - Math.exp(-dt * (tandemBack ? 14 : 3 + 5 * blendIn)));
     rig.root.rotation.y = tr.yaw;
 
     // --- content filter: hand-to-mouth (e.g. smoking) is not mirrored ---
@@ -1671,7 +1692,7 @@ export class Installation {
     let move = null;
     if (tr.seat) {
       rig.resetTargets();
-      animBike(rig, tr.pedal);
+      animBike(rig, tr.pedal ?? 0);
     } else if (tr.action) {
       rig.resetTargets();
       animIdle(rig, t, idx);
@@ -1848,7 +1869,7 @@ export class Installation {
     const e = this.energy;
     const night = env.night;
     // screen glow
-    this.screenLight.intensity = (1.2 + e * 0.35) * (0.7 + night * 2.5) * this.fade;
+    this.screenLight.intensity = (1.2 + e * 0.35) * (0.7 + night * 1.6) * this.fade;
     this.screenLight.color.setHSL(0.09 - Math.min(e, 3) * 0.01, 0.5 - Math.min(e, 3) * 0.12, 0.8);
     // sensor LEDs blink when tracking
     this.sensorLeds.forEach((led, i) => {
@@ -1871,19 +1892,20 @@ export class Installation {
       }
       const col = _c.set('#ffd9a0');
       s.light.color.copy(col);
-      s.light.intensity = sp * (60 + night * 140);
+      s.light.intensity = sp * (60 + night * 90);
       s.beam.visible = sp > 0.01;
       s.beam.material.uniforms.color.value.copy(col);
       s.beam.material.uniforms.intensity.value = sp * (0.06 + night * 0.3);
     });
-    // guide strips in the paving: clear in every light but never flashy – stronger by day (they have
-    // to beat the sunlight), softer at night (when bloom makes them glow anyway)
+    // guide strips in the paving: only lit when it is dark – off by day, faint at dusk, on at night
     this.guidePhase += dt * 0.3; // bands move ~1.2 m/s
     this.guideMat.uniforms.phase.value = this.guidePhase;
-    this.guideMat.uniforms.intensity.value = 1.55 - 0.75 * night;
+    const dark = smooth(0.25, 1, night);
+    this.guideMat.uniforms.intensity.value = 0.9 * dark;
+    this.guides.children.forEach((m) => { if (m.material === this.guideMat) m.visible = dark > 0.01; });
     // festoon lights
     const f = smooth(2.2, 3.0, e);
-    const bright = 0.35 + f * (1.4 + night * 2.2);
+    const bright = 0.35 + f * (1.4 + night * 1.4);
     this.festoon.material.color.setScalar(bright);
     if (fest) {
       for (let i = 0; i < this.festoonPts.length; i++) {
@@ -1896,7 +1918,7 @@ export class Installation {
       this.festoon.instanceColor.needsUpdate = true;
       this.festoonWasFest = false;
     }
-    this.festoonLights.forEach((l) => { l.intensity = f * (4 + night * 18); });
+    this.festoonLights.forEach((l) => { l.intensity = f * (4 + night * 11); });
     this.updateMarquee(t, night);
   }
 
@@ -2112,7 +2134,8 @@ export class Installation {
 }
 
 const _c = new THREE.Color();
-/** Every person on the stage gets one of these colours (ring on the screen, ring at their feet, lit benches/footprints). */
+const LED_OFF = '#2a2d31'; // an unlit LED strip on a bench
+/** Every person on the stage gets one of these colours (ring under the avatar on the screen, lit benches and footprints). */
 const PLAYER_COLORS = ['#ff5a5f', '#ffb400', '#2ec4b6', '#5b8cff', '#c86bfa', '#7bd389', '#ff8c42', '#f15bb5'];
 const HAND_REACH = 1.2; // metres between two people who can hold hands (about an arm's length each)
 const SPOT_R = 0.45; // standing within this distance of a painted footprint pair = standing on it
@@ -2292,61 +2315,112 @@ function factBubble(text, { font = '600 48px Georgia, serif', lineH = 58, fill =
 }
 
 /**
- * A rounded 1940s car: saloon (Volvo PV444-ish, optional two-tone roof), coupé (1940 Ford-ish,
- * long bonnet + chrome grille) or delivery van (PV445-ish). Separate mudguards and whitewall tyres.
+ * A 1940s car built from side profiles (extruded, with rounded edges) – a fastback saloon like the
+ * Volvo PV444 (optionally two-tone), a coupé with a long bonnet (1940 Ford), or a delivery van
+ * (PV445 Duett) with a shop sign. Separate pontoon mudguards, running boards, whitewall tyres,
+ * a chrome grille, bumpers and lamps. Faces +x; parked on y = 0.
  */
-function vintageCar(color, { van = false, roof = null, coupe = false } = {}) {
+function vintageCar(color, { van = false, roof = null, coupe = false, sign = null } = {}) {
   const g = new THREE.Group();
-  const paint = M(color, 0.35, 0.3), chrome = M('#d8d8d8', 0.2, 0.9), dark = M('#141618', 0.3, 0.4), tyre = M('#111', 0.7), white = M('#f2efe8', 0.6);
-  const top = roof ? M(roof, 0.4, 0.2) : paint;
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 2.8, 8, 16), paint);
-  body.rotation.z = Math.PI / 2; body.scale.set(1, 0.9, 1.3); body.position.y = 0.72;
-  g.add(body);
+  const paint = M(color, 0.32, 0.35), top = roof ? M(roof, 0.38, 0.2) : paint;
+  // 'chrome' is mostly light grey: the 1944 scene has no reflection map, so a real metal would render black
+  const chrome = M('#e4e4e2', 0.25, 0.35), glass = M('#2a3640', 0.1, 0.4), tyre = M('#121212', 0.75), white = M('#f2efe8', 0.6);
+  const W = 1.5; // body width
+  const extrude = (pts, width, mat, z = 0, bevel = 0.07) => {
+    const shape = new THREE.Shape();
+    shape.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i];
+      if (p.length === 4) shape.quadraticCurveTo(p[0], p[1], p[2], p[3]); else shape.lineTo(p[0], p[1]);
+    }
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: width - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, curveSegments: 14 });
+    geo.translate(0, 0, -(width - bevel * 2) / 2 + z);
+    const m = new THREE.Mesh(geo, mat);
+    g.add(m);
+    return m;
+  };
+  // lower body: tail, waist line, bonnet, rounded nose
+  const front = coupe ? 2.2 : 2.1;
+  extrude(van ? [
+    [-2.0, 0.42], [-2.05, 0.95], [-0.25, 0.98], [1.55, 0.95], [front, 0.88, front, 0.62], [front - 0.05, 0.42],
+  ] : [
+    [-2.0, 0.42], [-2.12, 0.62, -1.98, 0.86], [coupe ? -1.0 : -1.25, 1.0], [1.55, 0.97], [front, 0.92, front, 0.62], [front - 0.05, 0.42],
+  ], W, paint);
   if (van) {
-    const box = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.05, 1.55), paint);
-    box.position.set(-0.55, 1.25, 0); g.add(box);
-    const win = new THREE.Mesh(new THREE.SphereGeometry(0.75, 16, 10, 0, Math.PI), dark);
-    win.scale.set(0.9, 0.6, 1); win.rotation.y = -Math.PI / 2; win.position.set(0.55, 1.2, 0); g.add(win);
+    // the tall load box behind the cab, with a rounded roof, and the shop's name on its side
+    extrude([[-2.05, 0.95], [-2.05, 1.62, -1.8, 1.78], [-0.25, 1.78], [-0.25, 0.95]], W + 0.02, paint, 0, 0.09);
+    extrude([[-0.3, 0.97], [-0.25, 1.62], [0.15, 1.62], [0.7, 0.97]], W - 0.12, glass, 0, 0.04); // cab window
+    extrude([[-0.27, 1.58], [-0.25, 1.68], [0.18, 1.68], [0.2, 1.58]], W - 0.08, paint, 0, 0.03); // cab roof
+    if (sign) {
+      for (const sz of [1, -1]) {
+        const p = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.42), new THREE.MeshStandardMaterial({ map: signTexture(sign, { bg: '#f1ead8', fg: '#7a1f2b', font: 'italic bold 60px Georgia, serif' }), roughness: 0.6 }));
+        p.position.set(-1.15, 1.3, sz * (W / 2 + 0.012));
+        p.rotation.y = sz > 0 ? 0 : Math.PI;
+        g.add(p);
+      }
+    }
   } else {
-    const cx = coupe ? -0.55 : -0.25, sx = coupe ? 1.0 : 1.3;
-    const cab = new THREE.Mesh(new THREE.SphereGeometry(0.9, 20, 12), top);
-    cab.scale.set(sx, 0.7, 0.85); cab.position.set(cx, 1.12, 0); g.add(cab);
-    const win = new THREE.Mesh(new THREE.SphereGeometry(0.91, 20, 12), dark);
-    win.scale.set(sx * 0.78, 0.5, 0.8); win.position.set(cx, 1.2, 0); g.add(win);
-    if (coupe) {
-      // long bonnet and an upright chrome grille
-      const hood = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 1.0, 6, 12), paint);
-      hood.rotation.z = Math.PI / 2; hood.position.set(1.15, 0.9, 0); g.add(hood);
-      const grille = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.42, 0.42), chrome);
-      grille.position.set(1.93, 0.78, 0); g.add(grille);
+    // the cabin in the roof colour, with side windows set into it, a windscreen and a rear window
+    const [r0, r1, f1, f0] = coupe ? [-0.95, -0.45, 0.1, 0.62] : [-1.25, -0.6, 0.3, 0.82];
+    extrude([[r0, 0.97], [r1 - 0.05, 1.5, r1 + 0.1, 1.54], [f1, 1.54], [f0, 0.97]], W - 0.2, top, 0, 0.06);
+    extrude([[r0 + 0.2, 1.0], [r1 + 0.08, 1.44], [f1 - 0.05, 1.45], [f0 - 0.18, 1.0]], W - 0.12, glass, 0, 0.02); // pokes out on both sides
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.46, W - 0.1), top);
+    pillar.position.set((r1 + f1) / 2 - 0.05, 1.22, 0);
+    g.add(pillar);
+    for (const [ax, ay, bx, by] of [[f1, 1.52, f0, 0.98], [r0, 0.98, r1, 1.5]]) {
+      const len = Math.hypot(bx - ax, by - ay), ang = Math.atan2(by - ay, bx - ax);
+      const pane = new THREE.Mesh(new THREE.BoxGeometry(len * 0.82, 0.02, W - 0.42), glass);
+      pane.position.set((ax + bx) / 2 + Math.sin(ang) * -0.035, (ay + by) / 2 + Math.cos(ang) * 0.035, 0);
+      pane.rotation.z = ang;
+      g.add(pane);
     }
   }
+  // grille, bumpers with overriders, lamps
+  for (let k = -3; k <= 3; k++) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.34, 0.025), chrome);
+    bar.position.set(front + 0.01, 0.66, k * 0.05);
+    g.add(bar);
+  }
+  for (const [bx, len] of [[front + 0.12, 1.72], [-2.12, 1.66]]) {
+    const bumper = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, len, 4, 8), chrome);
+    bumper.rotation.x = Math.PI / 2;
+    bumper.position.set(bx, 0.42, 0);
+    g.add(bumper);
+  }
+  for (const z of [-0.6, 0.6]) {
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10), new THREE.MeshBasicMaterial({ color: '#fff3d0' }));
+    lamp.position.set(front - 0.25, 0.86, z * 1.08);
+    lamp.scale.set(0.7, 1, 1);
+    g.add(lamp);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.02, 6, 14), chrome);
+    ring.position.copy(lamp.position).add(new THREE.Vector3(0.03, 0, 0));
+    ring.rotation.y = Math.PI / 2;
+    g.add(ring);
+    const tail = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: '#9a1a1a' }));
+    tail.position.set(-2.06, 0.78, z);
+    g.add(tail);
+  }
+  // wheels with whitewalls and hub caps, under rounded pontoon mudguards, and running boards
   g.userData.wheels = [];
-  const fenderGeo = new THREE.CylinderGeometry(0.46, 0.46, 0.34, 18, 1, false, -Math.PI / 2, Math.PI);
-  for (const wx of [-1.2, 1.2]) for (const wz of [-0.72, 0.72]) {
+  const mudguard = new THREE.SphereGeometry(1, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2); // a dome, scaled into a mudguard
+  for (const wx of [-1.25, 1.3]) for (const wz of [-0.72, 0.72]) {
     const w = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.22, 18), tyre);
     w.rotation.x = Math.PI / 2; w.position.set(wx, 0.33, wz); g.add(w);
-    const wall = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.235, 18), white); // whitewall
+    const wall = new THREE.Mesh(new THREE.CylinderGeometry(0.235, 0.235, 0.232, 18), white);
     wall.rotation.x = Math.PI / 2; wall.position.set(wx, 0.33, wz); g.add(wall);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.25, 12), chrome);
-    hub.rotation.x = Math.PI / 2; hub.position.set(wx, 0.33, wz); g.add(hub);
-    const fender = new THREE.Mesh(fenderGeo, paint); // separate rounded mudguard over each wheel
-    fender.rotation.x = -Math.PI / 2; fender.position.set(wx, 0.38, wz * 1.02); g.add(fender);
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), chrome);
+    hub.scale.set(1, 1, 0.5); hub.position.set(wx, 0.33, wz * 1.17); g.add(hub);
+    const guard = new THREE.Mesh(mudguard, paint);
+    guard.scale.set(0.62, 0.52, 0.2);
+    guard.position.set(wx + (wx > 0 ? 0.05 : -0.05), 0.42, wz * 1.08);
+    g.add(guard);
     g.userData.wheels.push(w, wall, hub);
   }
-  // running boards between the mudguards
-  for (const wz of [-0.8, 0.8]) {
-    const rb = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.05, 0.22), dark);
-    rb.position.set(0, 0.32, wz); g.add(rb);
-  }
-  for (const bx of [-2.0, 2.0]) {
-    const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 1.75), chrome);
-    bumper.position.set(bx, 0.45, 0); g.add(bumper);
-  }
-  const lamp = new THREE.MeshBasicMaterial({ color: '#fff3d0' });
-  for (const lz of [-0.55, 0.55]) {
-    const l = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), lamp);
-    l.position.set(1.75, 0.95, lz); g.add(l);
+  for (const wz of [-0.84, 0.84]) {
+    const board = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.04, 0.2), M('#1c1c1c', 0.6));
+    board.position.set(0.02, 0.36, wz);
+    g.add(board);
   }
   g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
   return g;

@@ -166,7 +166,7 @@ export class Player {
     }
     if (!pose && !this.gesture && !this.seat) {
       // holding a neighbour's hand (sides from the installation), or holding a hand out
-      if (this.handSides?.length) for (const side of this.handSides) animHoldHand(rig, side);
+      if (this.wantsHands && this.handSides?.length) for (const side of this.handSides) animHoldHand(rig, side);
       else if (this.wantsHands) animHoldHand(rig, 'R', 0.6);
     }
     rig.update(dt, pose ? 20 : 16);

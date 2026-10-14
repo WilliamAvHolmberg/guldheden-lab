@@ -35,7 +35,7 @@ export class Net {
     this.socket = new PartySocket({ host, party: 'guldheden', room: this.room, id: this.id });
     this.socket.addEventListener('open', () => {
       this.connected = true;
-      this.send({ t: 'hello', ...this.hello });
+      this.send({ t: 'hello', ...this.hello, visible: document.visibilityState === 'visible' });
       this.h.onStatus?.('online');
     });
     this.socket.addEventListener('close', () => {
@@ -63,6 +63,9 @@ export class Net {
         default:
       }
     });
+    // A tab in the background barely runs (no animation frames), so it must not be the one that
+    // simulates the visitors: tell the server whenever this tab is hidden or shown again.
+    document.addEventListener('visibilitychange', () => this.send({ t: 'vis', v: document.visibilityState === 'visible' }));
     return true;
   }
 
